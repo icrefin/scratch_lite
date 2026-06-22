@@ -28,10 +28,22 @@ Everything else — WYSIWYG editing, AI editing, export, focus mode, themes, key
 - **Export** — Copy as Markdown, Plain Text, HTML; Print as PDF
 - **Customizable** — Theme, typography, page width, RTL text
 
+## Installation (macOS)
+
+Download the `.dmg` from the [releases page](https://github.com/icrefin/scratch_lite/releases), mount it, and drag ScratchLite to your Applications folder.
+
+If macOS blocks the app because it is not notarized, run this in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/ScratchLite.app
+```
+
+This removes the quarantine flag set by macOS on files downloaded from the internet. You only need to do this once after the first download.
+
 ## Credits
 
 ScratchLite is a fork of [Scratch](https://github.com/erictli/scratch) by [Eric Li](https://ericli.io). All credit for the original app and its design goes to Eric Li and the Scratch contributors. Please support the original project.
 
 ## License
 
-MIT
+MIT. Based on [Scratch](https://github.com/erictli/scratch) © Eric Li.
