@@ -4,20 +4,18 @@ import {
   SwatchIcon,
   KeyboardIcon,
   InfoIcon,
-  IntegrationsIcon,
 } from "../icons";
 import { Button, IconButton } from "../ui";
 import { AppearanceSettingsSection } from "./EditorSettingsSection";
 import { ShortcutsSettingsSection } from "./ShortcutsSettingsSection";
 import { AboutSettingsSection } from "./AboutSettingsSection";
-import { ToolsSettingsSection } from "./ToolsSettingsSection";
 import { mod, isMac } from "../../lib/platform";
 
 interface SettingsPageProps {
   onBack: () => void;
 }
 
-type SettingsTab = "tools" | "editor" | "shortcuts" | "about";
+type SettingsTab = "editor" | "shortcuts" | "about";
 
 const tabs: {
   id: SettingsTab;
@@ -25,14 +23,13 @@ const tabs: {
   icon: typeof SwatchIcon;
   shortcut: string;
 }[] = [
-  { id: "tools", label: "Integrations", icon: IntegrationsIcon, shortcut: "1" },
-  { id: "editor", label: "Appearance", icon: SwatchIcon, shortcut: "2" },
-  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon, shortcut: "3" },
-  { id: "about", label: "About", icon: InfoIcon, shortcut: "4" },
+  { id: "editor", label: "Appearance", icon: SwatchIcon, shortcut: "1" },
+  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon, shortcut: "2" },
+  { id: "about", label: "About", icon: InfoIcon, shortcut: "3" },
 ];
 
 export function SettingsPage({ onBack }: SettingsPageProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("tools");
+  const [activeTab, setActiveTab] = useState<SettingsTab>("editor");
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Reset scroll position when tab changes
@@ -48,14 +45,11 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
       if (e.metaKey || e.ctrlKey) {
         if (e.key === "1") {
           e.preventDefault();
-          setActiveTab("tools");
+          setActiveTab("editor");
         } else if (e.key === "2") {
           e.preventDefault();
-          setActiveTab("editor");
-        } else if (e.key === "3") {
-          e.preventDefault();
           setActiveTab("shortcuts");
-        } else if (e.key === "4") {
+        } else if (e.key === "3") {
           e.preventDefault();
           setActiveTab("about");
         }
@@ -124,7 +118,6 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           className="flex-1 overflow-auto scrollbar-gutter-stable"
         >
           <div className="w-full max-w-3xl mx-auto px-6 pb-6">
-            {activeTab === "tools" && <ToolsSettingsSection />}
             {activeTab === "editor" && <AppearanceSettingsSection />}
             {activeTab === "shortcuts" && <ShortcutsSettingsSection />}
             {activeTab === "about" && <AboutSettingsSection />}

@@ -1,6 +1,6 @@
 [package]
 name = "scratch-lite"
-version = "0.1.0"
+version = "0.1.1"
 description = "A simplified markdown scratchpad based on Scratch"
 authors = ["icrefin"]
 edition = "2021"

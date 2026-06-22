@@ -6,13 +6,9 @@ import { Editor, type PreviewModeData } from "./components/editor/Editor";
 import type { Editor as TiptapEditor } from "@tiptap/react";
 import { CommandPalette } from "./components/command-palette/CommandPalette";
 import { SettingsPage } from "./components/settings";
-import { AiEditModal } from "./components/ai/AiEditModal";
-import { AiResponseToast } from "./components/ai/AiResponseToast";
 import { KeyboardShortcutsModal } from "./components/shortcuts/KeyboardShortcutsModal";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as filesService from "./services/files";
-import * as aiService from "./services/ai";
-import type { AiProvider } from "./services/ai";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -25,11 +21,8 @@ function AppContent() {
 
   const [view, setView] = useState<ViewState>("editor");
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [aiModalOpen, setAiModalOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [aiEditing, setAiEditing] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
-  const [aiProvider, setAiProvider] = useState<AiProvider>("claude");
   const editorRef = useRef<TiptapEditor | null>(null);
 
   // Preview mode data (for the editor)
@@ -303,73 +296,6 @@ function AppContent() {
   const toggleFocusModeRef = useRef(toggleFocusMode);
   toggleFocusModeRef.current = toggleFocusMode;
 
-  // Back to command palette from AI modal
-  const handleBackToPalette = useCallback(() => {
-    setAiModalOpen(false);
-    setPaletteOpen(true);
-  }, []);
-
-  // AI Edit handler
-  const handleAiEdit = useCallback(
-    async (prompt: string, ollamaModel?: string) => {
-      if (!filePath) {
-        toast.error("No file open");
-        return;
-      }
-
-      setAiEditing(true);
-
-      try {
-        let result: aiService.AiExecutionResult;
-        if (aiProvider === "codex") {
-          result = await aiService.executeCodexEdit(filePath, prompt);
-        } else if (aiProvider === "opencode") {
-          result = await aiService.executeOpenCodeEdit(filePath, prompt);
-        } else if (aiProvider === "ollama") {
-          result = await aiService.executeOllamaEdit(
-            filePath,
-            prompt,
-            ollamaModel || "qwen3:8b",
-          );
-        } else {
-          result = await aiService.executeClaudeEdit(filePath, prompt);
-        }
-
-        // Reload file from disk
-        await reload();
-
-        // Show results
-        if (result.success) {
-          setAiModalOpen(false);
-          toast(
-            <AiResponseToast output={result.output} provider={aiProvider} />,
-            {
-              duration: Infinity,
-              closeButton: true,
-              className: "!min-w-[450px] !max-w-[600px]",
-            },
-          );
-        } else {
-          toast.error(
-            <div className="space-y-1">
-              <div className="font-medium">AI Edit Failed</div>
-              <div className="text-xs">{result.error || "Unknown error"}</div>
-            </div>,
-            { duration: Infinity, closeButton: true },
-          );
-        }
-      } catch (error) {
-        console.error("[AI] Error:", error);
-        toast.error(
-          `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
-        );
-      } finally {
-        setAiEditing(false);
-      }
-    },
-    [aiProvider, filePath, reload],
-  );
-
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -554,14 +480,11 @@ function AppContent() {
         )}
       </div>
 
-      {/* Shared backdrop for command palette and AI modal */}
-      {(paletteOpen || aiModalOpen) && (
+      {/* Backdrop */}
+      {paletteOpen && (
         <div
           className="fixed inset-0 bg-text/50 backdrop-blur-sm z-40 animate-fade-in"
-          onClick={() => {
-            if (paletteOpen) handleClosePalette();
-            if (aiModalOpen) setAiModalOpen(false);
-          }}
+          onClick={handleClosePalette}
         />
       )}
 
@@ -575,39 +498,11 @@ function AppContent() {
         onClose={handleClosePalette}
         onOpenSettings={toggleSettings}
         onOpenShortcuts={() => setShortcutsOpen(true)}
-        onOpenAiModal={(provider) => {
-          setAiProvider(provider);
-          setAiModalOpen(true);
-        }}
         focusMode={focusMode}
         onToggleFocusMode={toggleFocusMode}
         editorRef={editorRef}
         currentNote={previewData && previewData.content !== null ? { title: previewData.title, content: previewData.content } : null}
       />
-      <AiEditModal
-        open={aiModalOpen}
-        provider={aiProvider}
-        onBack={handleBackToPalette}
-        onExecute={handleAiEdit}
-        isExecuting={aiEditing}
-      />
-
-      {/* AI Editing Overlay */}
-      {aiEditing && (
-        <div className="fixed inset-0 bg-bg/50 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="flex items-center gap-2">
-            <div className="text-sm font-medium text-text">
-              {aiProvider === "codex"
-                ? "Codex is editing..."
-                : aiProvider === "opencode"
-                  ? "OpenCode is editing..."
-                  : aiProvider === "ollama"
-                    ? "Ollama is editing..."
-                    : "Claude is editing..."}
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }

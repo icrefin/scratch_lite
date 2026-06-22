@@ -10,7 +10,6 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useTheme } from "../../context/ThemeContext";
-import * as aiService from "../../services/ai";
 import { downloadPdf, downloadMarkdown } from "../../services/pdf";
 import type { Editor } from "@tiptap/react";
 import { CommandItem } from "../ui";
@@ -20,16 +19,11 @@ import {
   DownloadIcon,
   SettingsIcon,
   SwatchIcon,
-  ClaudeIcon,
   ZenIcon,
   MarkdownIcon,
-  CodexIcon,
-  OpenCodeIcon,
-  OllamaIcon,
   KeyboardIcon,
 } from "../icons";
 import { mod, shift } from "../../lib/platform";
-import type { AiProvider } from "../../services/ai";
 
 interface Command {
   id: string;
@@ -44,7 +38,6 @@ interface CommandPaletteProps {
   onClose: () => void;
   onOpenSettings?: () => void;
   onOpenShortcuts?: () => void;
-  onOpenAiModal?: (provider: AiProvider) => void;
   focusMode?: boolean;
   onToggleFocusMode?: () => void;
   editorRef?: React.RefObject<Editor | null>;
@@ -56,7 +49,6 @@ export function CommandPalette({
   onClose,
   onOpenSettings,
   onOpenShortcuts,
-  onOpenAiModal,
   focusMode,
   onToggleFocusMode,
   editorRef,
@@ -65,90 +57,15 @@ export function CommandPalette({
   const { setTheme } = useTheme();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [availableAiProviders, setAvailableAiProviders] = useState<
-    AiProvider[]
-  >([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open || !currentNote) {
-      setAvailableAiProviders([]);
-      return;
-    }
-
-    let active = true;
-    aiService
-      .getAvailableAiProviders()
-      .then((providers) => {
-        if (active) {
-          setAvailableAiProviders(providers);
-        }
-      })
-      .catch((error) => {
-        if (active) {
-          console.error("Failed to discover AI providers:", error);
-          setAvailableAiProviders([]);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [open, currentNote?.title]);
 
   const commands = useMemo<Command[]>(() => {
     const baseCommands: Command[] = [];
 
     // Add note-specific commands if a note is open
     if (currentNote) {
-      const aiCommands: Command[] = onOpenAiModal
-        ? availableAiProviders.map((provider) => {
-            const action = () => {
-              onOpenAiModal(provider);
-              onClose();
-            };
-
-            if (provider === "codex") {
-              return {
-                id: "ai-edit-codex",
-                label: "Edit with OpenAI Codex",
-                icon: <CodexIcon className="w-4.5 h-4.5 fill-text-muted" />,
-                action,
-              };
-            }
-
-            if (provider === "opencode") {
-              return {
-                id: "ai-edit-opencode",
-                label: "Edit with OpenCode",
-                icon: (
-                  <OpenCodeIcon className="w-4.5 h-4.5 fill-text-muted" />
-                ),
-                action,
-              };
-            }
-
-            if (provider === "ollama") {
-              return {
-                id: "ai-edit-ollama",
-                label: "Edit with Ollama",
-                icon: <OllamaIcon className="w-4.5 h-4.5 fill-text-muted" />,
-                action,
-              };
-            }
-
-            return {
-              id: "ai-edit-claude",
-              label: "Edit with Claude Code",
-              icon: <ClaudeIcon className="w-4.5 h-4.5 fill-text-muted" />,
-              action,
-            };
-          })
-        : [];
-
       baseCommands.push(
-        ...aiCommands,
         {
           id: "copy-markdown",
           label: "Copy Markdown",
@@ -333,8 +250,6 @@ export function CommandPalette({
     currentNote,
     onClose,
     onOpenSettings,
-    onOpenAiModal,
-    availableAiProviders,
     setTheme,
     focusMode,
     onToggleFocusMode,
