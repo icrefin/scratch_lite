@@ -9,46 +9,23 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { useNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
-import { useGit } from "../../context/GitContext";
-import * as notesService from "../../services/notes";
 import * as aiService from "../../services/ai";
 import { downloadPdf, downloadMarkdown } from "../../services/pdf";
-import type { Settings } from "../../types/note";
 import type { Editor } from "@tiptap/react";
-import {
-  CommandItem,
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "../ui";
-import { cleanTitle } from "../../lib/utils";
+import { CommandItem } from "../ui";
 import { plainTextFromMarkdown } from "../../lib/plainText";
-import { duplicateNote } from "../../services/notes";
 import {
   CopyIcon,
   DownloadIcon,
   SettingsIcon,
   SwatchIcon,
-  GitCommitIcon,
-  RefreshCwIcon,
-  AddNoteIcon,
-  TrashIcon,
-  PinIcon,
   ClaudeIcon,
   ZenIcon,
   MarkdownIcon,
   CodexIcon,
   OpenCodeIcon,
   OllamaIcon,
-  FolderIcon,
-  FolderPlusIcon,
   KeyboardIcon,
 } from "../icons";
 import { mod, shift } from "../../lib/platform";
@@ -71,6 +48,7 @@ interface CommandPaletteProps {
   focusMode?: boolean;
   onToggleFocusMode?: () => void;
   editorRef?: React.RefObject<Editor | null>;
+  currentNote?: { title: string; content: string } | null;
 }
 
 export function CommandPalette({
@@ -82,40 +60,16 @@ export function CommandPalette({
   focusMode,
   onToggleFocusMode,
   editorRef,
+  currentNote,
 }: CommandPaletteProps) {
-  const {
-    notes,
-    selectNote,
-    createNote,
-    deleteNote,
-    currentNote,
-    refreshNotes,
-    pinNote,
-    unpinNote,
-    notesFolder,
-  } = useNotes();
   const { setTheme } = useTheme();
-  const { status, gitAvailable, gitEnabled, commit, sync, isSyncing } = useGit();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
-  const [localSearchResults, setLocalSearchResults] = useState<
-    { id: string; title: string; preview: string; modified: number }[]
-  >([]);
-  const [settings, setSettings] = useState<Settings | null>(null);
   const [availableAiProviders, setAvailableAiProviders] = useState<
     AiProvider[]
   >([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-
-  // Load settings when palette opens or current note changes
-  useEffect(() => {
-    if (open) {
-      notesService.getSettings().then(setSettings);
-    }
-  }, [open, currentNote?.id]);
 
   useEffect(() => {
     if (!open || !currentNote) {
@@ -141,37 +95,13 @@ export function CommandPalette({
     return () => {
       active = false;
     };
-  }, [open, currentNote?.id]);
+  }, [open, currentNote?.title]);
 
-  // Memoize commands array
   const commands = useMemo<Command[]>(() => {
-    const baseCommands: Command[] = [
-      {
-        id: "new-note",
-        label: "New Note",
-        shortcut: `${mod} N`,
-        icon: <AddNoteIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
-        action: () => {
-          createNote();
-          onClose();
-        },
-      },
-      {
-        id: "new-folder",
-        label: "New Folder",
-        shortcut: undefined,
-        icon: <FolderPlusIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
-        action: () => {
-          onClose();
-          window.dispatchEvent(new CustomEvent("create-new-folder"));
-        },
-      },
-    ];
+    const baseCommands: Command[] = [];
 
-    // Add note-specific commands if a note is selected
+    // Add note-specific commands if a note is open
     if (currentNote) {
-      const isPinned =
-        settings?.pinnedNoteIds?.includes(currentNote.id) || false;
       const aiCommands: Command[] = onOpenAiModal
         ? availableAiProviders.map((provider) => {
             const action = () => {
@@ -218,49 +148,7 @@ export function CommandPalette({
         : [];
 
       baseCommands.push(
-        {
-          id: isPinned ? "unpin-note" : "pin-note",
-          label: isPinned ? "Unpin Current Note" : "Pin Current Note",
-          icon: <PinIcon className="w-5 h-5 stroke-[1.3]" />,
-          action: async () => {
-            try {
-              if (isPinned) {
-                await unpinNote(currentNote.id);
-              } else {
-                await pinNote(currentNote.id);
-              }
-              onClose();
-            } catch (error) {
-              console.error("Failed to pin/unpin note:", error);
-              toast.error(`Failed to ${isPinned ? "unpin" : "pin"} note`);
-            }
-          },
-        },
         ...aiCommands,
-        {
-          id: "duplicate-note",
-          label: "Duplicate Current Note",
-          icon: <CopyIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
-          action: async () => {
-            try {
-              const newNote = await duplicateNote(currentNote.id);
-              await refreshNotes();
-              selectNote(newNote.id);
-              onClose();
-            } catch (error) {
-              console.error("Failed to duplicate note:", error);
-            }
-          },
-        },
-        {
-          id: "delete-note",
-          label: "Delete Current Note",
-          icon: <TrashIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
-          action: () => {
-            setNoteToDelete(currentNote.id);
-            setDeleteDialogOpen(true);
-          },
-        },
         {
           id: "copy-markdown",
           label: "Copy Markdown",
@@ -323,8 +211,6 @@ export function CommandPalette({
                 return;
               }
               await downloadPdf(editorRef.current, currentNote.title);
-              // Note: window.print() opens the print dialog but doesn't wait for user action
-              // No success toast needed - the print dialog provides its own feedback
               onClose();
             } catch (error) {
               console.error("Failed to open print dialog:", error);
@@ -339,10 +225,9 @@ export function CommandPalette({
           action: async () => {
             try {
               if (!currentNote) {
-                toast.error("No note selected");
+                toast.error("No note open");
                 return;
               }
-              // Use live editor content with nbsp cleanup, fall back to saved content
               let markdown = currentNote.content;
               const editorInstance = editorRef?.current;
               if (editorInstance) {
@@ -366,46 +251,6 @@ export function CommandPalette({
           },
         },
       );
-    }
-
-    // Add git commands when git integration is visible and initialized
-    if (gitEnabled && gitAvailable && status?.isRepo) {
-      const hasChanges = (status?.changedCount ?? 0) > 0;
-      const canSync = status?.hasRemote && status?.hasUpstream && !isSyncing;
-
-      if (hasChanges) {
-        baseCommands.push({
-          id: "git-commit",
-          label: "Git: Quick Commit",
-          icon: <GitCommitIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
-          action: async () => {
-            const success = await commit("Quick commit from Scratch");
-            if (success) {
-              toast.success("Changes committed");
-            } else {
-              toast.error("Failed to commit");
-            }
-            onClose();
-          },
-        });
-      }
-
-      if (canSync) {
-        baseCommands.push({
-          id: "git-sync",
-          label: "Git: Sync (Pull and Push)",
-          icon: <RefreshCwIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
-          action: async () => {
-            const result = await sync();
-            if (result.ok) {
-              toast.success(result.message);
-            } else {
-              toast.error(result.error);
-            }
-            onClose();
-          },
-        });
-      }
     }
 
     // Focus mode and source toggle
@@ -432,24 +277,6 @@ export function CommandPalette({
       },
     );
 
-    // Open notes folder
-    if (notesFolder) {
-      baseCommands.push({
-        id: "open-folder",
-        label: "Open Notes Folder",
-        icon: <FolderIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
-        action: async () => {
-          try {
-            await invoke("open_in_file_manager", { path: notesFolder });
-            onClose();
-          } catch (error) {
-            console.error("Failed to open folder:", error);
-            toast.error("Failed to open folder");
-          }
-        },
-      });
-    }
-
     // Keyboard shortcuts, settings, and theme commands at the bottom
     baseCommands.push(
       {
@@ -474,7 +301,7 @@ export function CommandPalette({
       },
       {
         id: "theme-light",
-        label: `Switch Theme to Light Mode`,
+        label: "Switch Theme to Light Mode",
         icon: <SwatchIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
         action: () => {
           setTheme("light");
@@ -483,7 +310,7 @@ export function CommandPalette({
       },
       {
         id: "theme-dark",
-        label: `Switch Theme to Dark Mode`,
+        label: "Switch Theme to Dark Mode",
         icon: <SwatchIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
         action: () => {
           setTheme("dark");
@@ -492,7 +319,7 @@ export function CommandPalette({
       },
       {
         id: "theme-system",
-        label: `Switch Theme to System Mode`,
+        label: "Switch Theme to System Mode",
         icon: <SwatchIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
         action: () => {
           setTheme("system");
@@ -503,76 +330,18 @@ export function CommandPalette({
 
     return baseCommands;
   }, [
-    createNote,
     currentNote,
-    deleteNote,
     onClose,
     onOpenSettings,
     onOpenAiModal,
     availableAiProviders,
     setTheme,
-    gitEnabled,
-    gitAvailable,
-    status,
-    commit,
-    sync,
-    isSyncing,
-    selectNote,
-    refreshNotes,
-    settings,
-    pinNote,
-    unpinNote,
     focusMode,
     onToggleFocusMode,
-    notesFolder,
     onOpenShortcuts,
+    editorRef,
   ]);
 
-  // Debounced search using Tantivy (local state, doesn't affect sidebar)
-  useEffect(() => {
-    if (!open) return;
-
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setLocalSearchResults([]);
-      return;
-    }
-
-    // Debounce search calls
-    const timer = setTimeout(async () => {
-      try {
-        const results = await invoke<
-          {
-            id: string;
-            title: string;
-            preview: string;
-            modified: number;
-            score: number;
-          }[]
-        >("search_notes", { query: trimmed });
-        setLocalSearchResults(results);
-      } catch (err) {
-        console.error("Search failed:", err);
-      }
-    }, 150);
-
-    return () => clearTimeout(timer);
-  }, [query, open]);
-
-  // Clear local search when palette closes
-  useEffect(() => {
-    if (!open) {
-      setLocalSearchResults([]);
-    }
-  }, [open]);
-
-  // Use search results when searching, otherwise show all notes
-  const filteredNotes = useMemo(() => {
-    if (!query.trim()) return notes;
-    return localSearchResults;
-  }, [query, notes, localSearchResults]);
-
-  // Memoize filtered commands
   const filteredCommands = useMemo(() => {
     if (!query.trim()) return commands;
     const queryLower = query.toLowerCase();
@@ -581,10 +350,9 @@ export function CommandPalette({
     );
   }, [query, commands]);
 
-  // Memoize all items (commands first, then notes)
   const allItems = useMemo(
-    () => [
-      ...filteredCommands.map((cmd) => ({
+    () =>
+      filteredCommands.map((cmd) => ({
         type: "command" as const,
         id: cmd.id,
         label: cmd.label,
@@ -592,21 +360,9 @@ export function CommandPalette({
         icon: cmd.icon,
         action: cmd.action,
       })),
-      ...filteredNotes.slice(0, 10).map((note) => ({
-        type: "note" as const,
-        id: note.id,
-        label: cleanTitle(note.title),
-        preview: note.preview,
-        action: () => {
-          selectNote(note.id);
-          onClose();
-        },
-      })),
-    ],
-    [filteredNotes, filteredCommands, selectNote, onClose],
+    [filteredCommands],
   );
 
-  // Reset state when opened
   useEffect(() => {
     if (open) {
       setQuery("");
@@ -615,12 +371,10 @@ export function CommandPalette({
     }
   }, [open]);
 
-  // Reset selection when items change
   useEffect(() => {
     setSelectedIndex(0);
   }, [query]);
 
-  // Scroll selected item into view
   useEffect(() => {
     if (listRef.current) {
       const selectedItem = listRef.current.querySelector(
@@ -629,20 +383,6 @@ export function CommandPalette({
       selectedItem?.scrollIntoView({ block: "center", behavior: "smooth" });
     }
   }, [selectedIndex]);
-
-  const handleDeleteConfirm = useCallback(async () => {
-    if (noteToDelete) {
-      try {
-        await deleteNote(noteToDelete);
-        setNoteToDelete(null);
-        setDeleteDialogOpen(false);
-        onClose();
-      } catch (error) {
-        console.error("Failed to delete note:", error);
-        toast.error("Failed to delete note");
-      }
-    }
-  }, [noteToDelete, deleteNote, onClose]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -676,13 +416,9 @@ export function CommandPalette({
 
   if (!open) return null;
 
-  const commandsCount = filteredCommands.length;
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center py-11 px-4 pointer-events-none">
-      {/* Palette */}
       <div className="relative w-full h-full max-h-108 max-w-2xl bg-bg rounded-xl shadow-2xl overflow-hidden border border-border animate-slide-down flex flex-col pointer-events-auto">
-        {/* Search input */}
         <div className="border-b border-border flex-none">
           <input
             ref={inputRef}
@@ -690,7 +426,7 @@ export function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search notes or type a command..."
+            placeholder="Type a command..."
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
@@ -699,89 +435,31 @@ export function CommandPalette({
           />
         </div>
 
-        {/* Results */}
         <div ref={listRef} className="overflow-y-auto h-full p-2.5 flex-1">
           {allItems.length === 0 ? (
             <div className="text-sm font-medium opacity-50 text-text-muted p-2">
               No results found
             </div>
           ) : (
-            <>
-              {/* Commands section */}
-              {filteredCommands.length > 0 && (
-                <div className="space-y-0.5 mb-5">
-                  <div className="text-sm font-medium text-text-muted px-2.5 py-1.5">
-                    Commands
-                  </div>
-                  {filteredCommands.map((cmd, i) => {
-                    return (
-                      <div key={cmd.id} data-index={i}>
-                        <CommandItem
-                          label={cmd.label}
-                          shortcut={cmd.shortcut}
-                          icon={cmd.icon}
-                          isSelected={selectedIndex === i}
-                          onClick={cmd.action}
-                        />
-                      </div>
-                    );
-                  })}
+            <div className="space-y-0.5">
+              <div className="text-sm font-medium text-text-muted px-2.5 py-1.5">
+                Commands
+              </div>
+              {filteredCommands.map((cmd, i) => (
+                <div key={cmd.id} data-index={i}>
+                  <CommandItem
+                    label={cmd.label}
+                    shortcut={cmd.shortcut}
+                    icon={cmd.icon}
+                    isSelected={selectedIndex === i}
+                    onClick={cmd.action}
+                  />
                 </div>
-              )}
-
-              {/* Notes section */}
-              {filteredNotes.length > 0 && (
-                <div className="space-y-0.5">
-                  <div className="text-sm font-medium text-text-muted px-2.5 py-1.5">
-                    Notes
-                  </div>
-                  {filteredNotes.slice(0, 10).map((note, i) => {
-                    const title = cleanTitle(note.title);
-                    const firstLetter = title.charAt(0).toUpperCase();
-                    // Clean subtitle: treat whitespace-only or &nbsp; as empty
-                    const cleanSubtitle = note.preview
-                      ?.replace(/&nbsp;/g, " ")
-                      .replace(/\u00A0/g, " ")
-                      .trim();
-                    const index = commandsCount + i;
-                    return (
-                      <div key={note.id} data-index={index}>
-                        <CommandItem
-                          label={title}
-                          subtitle={cleanSubtitle}
-                          iconText={firstLetter}
-                          variant="note"
-                          isSelected={selectedIndex === index}
-                          onClick={allItems[index].action}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </>
+              ))}
+            </div>
           )}
         </div>
       </div>
-
-      {/* Delete confirmation dialog */}
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete note?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete the note and all its content. This
-              action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteConfirm}>
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

@@ -1,14 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import {
   ArrowLeftIcon,
-  FolderIcon,
   SwatchIcon,
   KeyboardIcon,
   InfoIcon,
   IntegrationsIcon,
 } from "../icons";
 import { Button, IconButton } from "../ui";
-import { GeneralSettingsSection } from "./GeneralSettingsSection";
 import { AppearanceSettingsSection } from "./EditorSettingsSection";
 import { ShortcutsSettingsSection } from "./ShortcutsSettingsSection";
 import { AboutSettingsSection } from "./AboutSettingsSection";
@@ -19,23 +17,22 @@ interface SettingsPageProps {
   onBack: () => void;
 }
 
-type SettingsTab = "general" | "tools" | "editor" | "shortcuts" | "about";
+type SettingsTab = "tools" | "editor" | "shortcuts" | "about";
 
 const tabs: {
   id: SettingsTab;
   label: string;
-  icon: typeof FolderIcon;
+  icon: typeof SwatchIcon;
   shortcut: string;
 }[] = [
-  { id: "general", label: "Folder", icon: FolderIcon, shortcut: "1" },
-  { id: "tools", label: "Integrations", icon: IntegrationsIcon, shortcut: "2" },
-  { id: "editor", label: "Appearance", icon: SwatchIcon, shortcut: "3" },
-  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon, shortcut: "4" },
-  { id: "about", label: "About", icon: InfoIcon, shortcut: "5" },
+  { id: "tools", label: "Integrations", icon: IntegrationsIcon, shortcut: "1" },
+  { id: "editor", label: "Appearance", icon: SwatchIcon, shortcut: "2" },
+  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon, shortcut: "3" },
+  { id: "about", label: "About", icon: InfoIcon, shortcut: "4" },
 ];
 
 export function SettingsPage({ onBack }: SettingsPageProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+  const [activeTab, setActiveTab] = useState<SettingsTab>("tools");
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Reset scroll position when tab changes
@@ -51,17 +48,14 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
       if (e.metaKey || e.ctrlKey) {
         if (e.key === "1") {
           e.preventDefault();
-          setActiveTab("general");
+          setActiveTab("tools");
         } else if (e.key === "2") {
           e.preventDefault();
-          setActiveTab("tools");
+          setActiveTab("editor");
         } else if (e.key === "3") {
           e.preventDefault();
-          setActiveTab("editor");
-        } else if (e.key === "4") {
-          e.preventDefault();
           setActiveTab("shortcuts");
-        } else if (e.key === "5") {
+        } else if (e.key === "4") {
           e.preventDefault();
           setActiveTab("about");
         }
@@ -130,7 +124,6 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           className="flex-1 overflow-auto scrollbar-gutter-stable"
         >
           <div className="w-full max-w-3xl mx-auto px-6 pb-6">
-            {activeTab === "general" && <GeneralSettingsSection />}
             {activeTab === "tools" && <ToolsSettingsSection />}
             {activeTab === "editor" && <AppearanceSettingsSection />}
             {activeTab === "shortcuts" && <ShortcutsSettingsSection />}

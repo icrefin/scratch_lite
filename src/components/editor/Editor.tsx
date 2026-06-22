@@ -58,23 +58,21 @@ function isAllowedUrlScheme(url: string): boolean {
 }
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
-import { useOptionalNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
 import { Frontmatter } from "./Frontmatter";
 import { BlockMathEditor } from "./BlockMathEditor";
 import { LinkEditor } from "./LinkEditor";
 import { SearchToolbar } from "./SearchToolbar";
 import { SlashCommand } from "./SlashCommand";
-import { Wikilink, type WikilinkStorage } from "./Wikilink";
+import { Wikilink } from "./Wikilink";
 import { WikilinkSuggestion } from "./WikilinkSuggestion";
 import { EditorWidthHandles } from "./EditorWidthHandle";
 import { ScratchBlockMath, normalizeBlockMath } from "./MathExtensions";
 import { cn } from "../../lib/utils";
 import { plainTextFromMarkdown } from "../../lib/plainText";
-import { Button, IconButton, ToolbarButton, Tooltip } from "../ui";
-import * as notesService from "../../services/notes";
+import { IconButton, ToolbarButton, Tooltip } from "../ui";
+
 import { downloadPdf, downloadMarkdown } from "../../services/pdf";
-import type { Settings } from "../../types/note";
 import {
   BoldIcon,
   ItalicIcon,
@@ -100,13 +98,10 @@ import {
   CopyIcon,
   DownloadIcon,
   ShareIcon,
-  PanelLeftIcon,
   RefreshCwIcon,
-  PinIcon,
   SearchIcon,
   MarkdownIcon,
   MarkdownOffIcon,
-  FolderPlusIcon,
 } from "../icons";
 
 function formatDateTime(timestamp: number): string {
@@ -119,32 +114,6 @@ function formatDateTime(timestamp: number): string {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function focusAndSelectTitle(editor: TiptapEditor): boolean {
-  let titleFrom = -1;
-  let titleTo = -1;
-
-  editor.state.doc.descendants((node, pos) => {
-    if (node.type.name !== "heading" || node.attrs.level !== 1) {
-      return true;
-    }
-    titleFrom = pos + 1;
-    titleTo = pos + node.nodeSize - 1;
-    return false;
-  });
-
-  if (titleFrom < 0 || titleTo < 0) return false;
-
-  editor
-    .chain()
-    .focus()
-    .setTextSelection(
-      titleFrom === titleTo ? titleFrom : { from: titleFrom, to: titleTo },
-    )
-    .run();
-
-  return true;
 }
 
 // Standard number-field shortcuts for KaTeX (shared between inline and block math)
@@ -431,22 +400,19 @@ function FormatBar({
 export interface PreviewModeData {
   content: string | null;
   title: string;
-  filePath: string;
+  filePath: string | null;
   modified: number;
   hasExternalChanges: boolean;
   reloadVersion: number;
   save: (content: string) => Promise<void>;
   reload: () => Promise<void>;
+  autoSave?: boolean;
 }
 
 interface EditorProps {
-  onToggleSidebar?: () => void;
-  sidebarVisible?: boolean;
   focusMode?: boolean;
   previewMode?: PreviewModeData;
   onEditorReady?: (editor: TiptapEditor | null) => void;
-  onSaveToFolder?: () => void;
-  saveToFolderDisabled?: boolean;
 }
 
 /**
@@ -503,55 +469,34 @@ function blockIndexToPos(
 }
 
 export function Editor({
-  onToggleSidebar,
-  sidebarVisible,
   focusMode,
   onEditorReady,
   previewMode,
-  onSaveToFolder,
-  saveToFolderDisabled,
 }: EditorProps) {
-  // Always call the hook (rules of hooks), but it returns null outside NotesProvider
-  const notesCtx = useOptionalNotes();
-
-  const currentNote = previewMode
-    ? previewMode.content !== null
-      ? {
-          id: previewMode.filePath,
-          title: previewMode.title,
-          content: previewMode.content,
-          path: previewMode.filePath,
-          modified: previewMode.modified,
-        }
-      : null
-    : (notesCtx?.currentNote ?? null);
+  const currentNote = previewMode?.content !== null && previewMode
+    ? {
+        id: previewMode.filePath || "untitled",
+        title: previewMode.title,
+        content: previewMode.content,
+        path: previewMode.filePath,
+        modified: previewMode.modified,
+      }
+    : null;
 
   const saveNote = previewMode
     ? async (content: string, _noteId?: string) => {
         await previewMode.save(content);
       }
-    : notesCtx!.saveNote;
+    : async () => {};
 
-  const createNote = notesCtx?.createNote;
-  const consumePendingNewNote = notesCtx?.consumePendingNewNote;
-  const hasExternalChanges = previewMode
-    ? previewMode.hasExternalChanges
-    : notesCtx!.hasExternalChanges;
-  const reloadCurrentNote = previewMode
-    ? previewMode.reload
-    : notesCtx!.reloadCurrentNote;
-  const reloadVersion = previewMode
-    ? previewMode.reloadVersion
-    : notesCtx!.reloadVersion;
-  const pinNote = notesCtx?.pinNote;
-  const unpinNote = notesCtx?.unpinNote;
-  const notes = notesCtx?.notes;
+  const hasExternalChanges = previewMode?.hasExternalChanges ?? false;
+  const reloadCurrentNote = previewMode?.reload ?? (() => {});
+  const reloadVersion = previewMode?.reloadVersion ?? 0;
   const { textDirection } = useTheme();
   const [isSaving, setIsSaving] = useState(false);
   // Force re-render when selection changes to update toolbar active states
   const [, setSelectionKey] = useState(0);
   const [copyMenuOpen, setCopyMenuOpen] = useState(false);
-  const [settings, setSettings] = useState<Settings | null>(null);
   // Delay transition classes until after initial mount to avoid format bar height animation on note load
   const [hasTransitioned, setHasTransitioned] = useState(false);
   useEffect(() => {
@@ -561,9 +506,6 @@ export function Editor({
     }
   }, [hasTransitioned, currentNote]);
 
-  // Delay format bar / header transitions only when the sidebar needs to animate closed
-  const needsSidebarDelay = focusMode && sidebarVisible;
-  const isSidebarActive = sidebarVisible && !focusMode;
   // Source mode state
   const [sourceMode, setSourceMode] = useState(false);
   const [sourceContent, setSourceContent] = useState("");
@@ -590,11 +532,7 @@ export function Editor({
   const currentNoteIdRef = useRef<string | null>(null);
   // Track if we need to save (use ref to avoid computing markdown on every keystroke)
   const needsSaveRef = useRef(false);
-  // Stable refs for wikilink click handler (avoids re-registering listener on every notes change)
-  const notesRef = useRef(notes);
-  notesRef.current = notes;
-  const notesCtxRef = useRef(notesCtx);
-  notesCtxRef.current = notesCtx;
+
 
   // Keep ref in sync with current note ID
   currentNoteIdRef.current = currentNote?.id ?? null;
@@ -616,21 +554,7 @@ export function Editor({
     [],
   );
 
-  // Load settings when note changes or notes are refreshed (e.g., after pin/unpin)
-  useEffect(() => {
-    if (currentNote?.id && !previewMode) {
-      notesService
-        .getSettings()
-        .then(setSettings)
-        .catch((error) => {
-          console.error("Failed to load settings:", error);
-        });
-    }
-  }, [currentNote?.id, notes, previewMode]);
 
-  // Calculate if current note is pinned
-  const isPinned =
-    settings?.pinnedNoteIds?.includes(currentNote?.id || "") || false;
 
   // Find all matches for search query (case-insensitive)
   const findMatches = useCallback(
@@ -746,16 +670,20 @@ export function Editor({
       saveTimeoutRef.current = null;
     }
 
+    if (!previewMode?.autoSave) return;
+
     // Use loadedNoteIdRef (the note in the editor) not currentNoteIdRef (which may have changed)
     if (needsSaveRef.current && editorRef.current && loadedNoteIdRef.current) {
       needsSaveRef.current = false;
       const markdown = getMarkdown(editorRef.current);
       await saveImmediately(loadedNoteIdRef.current, markdown);
     }
-  }, [saveImmediately, getMarkdown]);
+  }, [saveImmediately, getMarkdown, previewMode?.autoSave]);
 
   // Schedule a debounced save (markdown computed only when timer fires)
   const scheduleSave = useCallback(() => {
+    if (!previewMode?.autoSave) return;
+
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
@@ -777,7 +705,7 @@ export function Editor({
         await saveImmediately(savingNoteId, markdown);
       }
     }, 500);
-  }, [saveImmediately, getMarkdown, currentNote?.id]);
+  }, [saveImmediately, getMarkdown, currentNote?.id, previewMode?.autoSave]);
 
   const closeBlockMathPopup = useCallback(() => {
     if (blockMathPopupRef.current) {
@@ -1180,20 +1108,20 @@ export function Editor({
               const base64 = (reader.result as string).split(",")[1]; // Remove data:image/...;base64, prefix
 
               try {
-                // Save clipboard image
+                const targetDir = previewMode
+                  ? await invoke<string>("get_parent_dir", {
+                      filePath: previewMode.filePath,
+                    })
+                  : await invoke<string>("get_app_data_dir");
+
                 const relativePath = await invoke<string>(
                   "save_clipboard_image",
-                  { base64Data: base64 },
+                  { base64Data: base64, targetDir },
                 );
 
-                // Get notes folder and construct absolute path using Tauri's join
-                const notesFolder = await invoke<string>("get_notes_folder");
-                const absolutePath = await join(notesFolder, relativePath);
-
-                // Convert to Tauri asset URL
+                const absolutePath = await join(targetDir, relativePath);
                 const assetUrl = convertFileSrc(absolutePath);
 
-                // Insert image
                 editorRef.current
                   ?.chain()
                   .focus()
@@ -1274,15 +1202,7 @@ export function Editor({
     onEditorReady?.(editor);
   }, [editor, onEditorReady]);
 
-  // Sync notes list into editor storage for wikilink autocomplete
-  useEffect(() => {
-    if (!editor || !notes) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const storage = (editor.storage as any).wikilink as
-      | WikilinkStorage
-      | undefined;
-    if (storage) storage.notes = notes;
-  }, [editor, notes]);
+
 
   // Search navigation functions (defined after editor is created)
   const goToNextMatch = useCallback(() => {
@@ -1336,21 +1256,13 @@ export function Editor({
     const handleEditorClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
 
-      // Check for wikilink click first (no modifier key required)
+      // Check for wikilink click (no modifier key required)
       const wikilinkEl = target.closest("[data-wikilink]");
       if (wikilinkEl) {
         e.preventDefault();
         const noteTitle = wikilinkEl.getAttribute("data-note-title");
-        const currentNotes = notesRef.current;
-        if (noteTitle && currentNotes) {
-          const note = currentNotes.find(
-            (n) => n.title.toLowerCase() === noteTitle.toLowerCase(),
-          );
-          if (note) {
-            notesCtxRef.current?.selectNote(note.id);
-          } else {
-            toast.info(`Note "${noteTitle}" does not exist yet`);
-          }
+        if (noteTitle) {
+          toast.info(`Note "${noteTitle}" does not exist yet`);
         }
         return;
       }
@@ -1451,8 +1363,6 @@ export function Editor({
       return;
     }
 
-    const isNewNote = loadedNoteIdRef.current === null;
-    const wasEmpty = !isNewNote && currentNote.content?.trim() === "";
     const loadingNoteId = currentNote.id;
 
     loadedNoteIdRef.current = loadingNoteId;
@@ -1492,33 +1402,8 @@ export function Editor({
       scrollContainerRef.current?.scrollTo(0, 0);
 
       isLoadingRef.current = false;
-
-      if (consumePendingNewNote?.(loadingNoteId)) {
-        if (!focusAndSelectTitle(editor)) {
-          editor.commands.focus("start");
-        }
-        return;
-      }
-
-      // For brand new empty notes, focus and select all so user can start typing
-      // Skip if the note list has focus (e.g. keyboard navigation with arrow keys)
-      if ((isNewNote || wasEmpty) && currentNote.content.trim() === "") {
-        const noteListFocused =
-          document.activeElement?.closest("[data-note-list]");
-        if (!noteListFocused) {
-          editor.commands.focus("start");
-          editor.commands.selectAll();
-        }
-      }
-      // For existing notes, don't auto-focus - let user click where they want
     });
-  }, [
-    currentNote,
-    editor,
-    flushPendingSave,
-    reloadVersion,
-    consumePendingNewNote,
-  ]);
+  }, [currentNote, editor, flushPendingSave, reloadVersion]);
 
   // Scroll to top on mount (e.g., when returning from settings)
   useEffect(() => {
@@ -1692,19 +1577,20 @@ export function Editor({
     });
     if (selected) {
       try {
-        // Copy image to assets folder and get relative path (assets/filename.ext)
+        const targetDir = previewMode
+          ? await invoke<string>("get_parent_dir", {
+              filePath: previewMode.filePath,
+            })
+          : await invoke<string>("get_app_data_dir");
+
         const relativePath = await invoke<string>("copy_image_to_assets", {
           sourcePath: selected as string,
+          targetDir,
         });
 
-        // Get notes folder and construct absolute path using Tauri's join
-        const notesFolder = await invoke<string>("get_notes_folder");
-        const absolutePath = await join(notesFolder, relativePath);
-
-        // Convert to Tauri asset URL
+        const absolutePath = await join(targetDir, relativePath);
         const assetUrl = convertFileSrc(absolutePath);
 
-        // Insert image with asset URL
         editor.chain().focus().setImage({ src: assetUrl }).run();
       } catch (error) {
         console.error("Failed to add image:", error);
@@ -2090,22 +1976,7 @@ export function Editor({
       );
     }
 
-    // A note is selected but not yet loaded — show loading spinner to avoid empty state flash
-    if (notesCtx?.selectedNoteId) {
-      return (
-        <div className="flex-1 flex flex-col bg-bg">
-          <div
-            className="h-10 shrink-0 flex items-end px-4 pb-1"
-            data-tauri-drag-region
-          ></div>
-          <div className="flex-1 flex items-center justify-center">
-            <SpinnerIcon className="w-6 h-6 text-text-muted animate-spin" />
-          </div>
-        </div>
-      );
-    }
-
-    // Folder mode: show empty state with "New Note" button
+    // No note loaded — show empty state
     return (
       <div className="flex-1 flex flex-col bg-bg">
         {/* Drag region */}
@@ -2137,20 +2008,6 @@ export function Editor({
             <p className="text-sm">
               Pick up where you left off, or start something new
             </p>
-            {createNote && (
-              <Button
-                onClick={createNote}
-                variant="secondary"
-                size="md"
-                className="mt-4"
-              >
-                New Note{" "}
-                <span className="text-text-muted ml-1">
-                  {mod}
-                  {isMac ? "" : "+"}N
-                </span>
-              </Button>
-            )}
           </div>
         </div>
       </div>
@@ -2159,36 +2016,20 @@ export function Editor({
 
   return (
     <div className="flex-1 flex flex-col bg-bg overflow-hidden">
-      {/* Drag region with sidebar toggle, date and save status */}
+      {/* Drag region with date and save status */}
       <div
-        className={cn(
-          "h-11 shrink-0 flex items-center justify-between px-3",
-          !isSidebarActive && "pl-22",
-        )}
+        className="h-11 shrink-0 flex items-center justify-between pl-22 pr-3"
         data-tauri-drag-region
       >
         <div
-          className={`titlebar-no-drag flex items-center gap-1 min-w-0 transition-opacity duration-400 ${needsSidebarDelay ? "delay-200" : ""} ${focusMode ? "opacity-0 pointer-events-none" : "opacity-100"}`}
+          className={`titlebar-no-drag flex items-center gap-1 min-w-0 transition-opacity duration-400 ${focusMode ? "opacity-0 pointer-events-none" : "opacity-100"}`}
         >
-          {onToggleSidebar && (
-            <IconButton
-              onClick={onToggleSidebar}
-              title={
-                isSidebarActive
-                  ? `Hide sidebar (${mod}${isMac ? "" : "+"}\\)`
-                  : `Show sidebar (${mod}${isMac ? "" : "+"}\\)`
-              }
-              className="shrink-0"
-            >
-              <PanelLeftIcon className="w-4.5 h-4.5 stroke-[1.5]" />
-            </IconButton>
-          )}
           <span className="text-xs text-text-muted mb-px truncate">
             {formatDateTime(currentNote.modified)}
           </span>
         </div>
         <div
-          className={`titlebar-no-drag flex items-center gap-px shrink-0 transition-opacity duration-400 ${needsSidebarDelay ? "delay-200" : ""} ${focusMode ? "opacity-0 pointer-events-none" : "opacity-100"}`}
+          className={`titlebar-no-drag flex items-center gap-px shrink-0 transition-opacity duration-400 ${focusMode ? "opacity-0 pointer-events-none" : "opacity-100"}`}
         >
           {hasExternalChanges ? (
             <Tooltip
@@ -2215,41 +2056,7 @@ export function Editor({
               </div>
             </Tooltip>
           )}
-          {currentNote && pinNote && unpinNote && (
-            <Tooltip content={isPinned ? "Unpin note" : "Pin note"}>
-              <IconButton
-                onClick={async () => {
-                  if (!currentNote) return;
-                  try {
-                    if (isPinned) {
-                      await unpinNote(currentNote.id);
-                      toast.success("Note unpinned");
-                    } else {
-                      await pinNote(currentNote.id);
-                      toast.success("Note pinned");
-                    }
-                    // Reload settings to update isPinned state
-                    const updatedSettings = await notesService.getSettings();
-                    setSettings(updatedSettings);
-                  } catch (error) {
-                    console.error("Failed to pin/unpin note:", error);
-                    toast.error(
-                      `Failed to ${isPinned ? "unpin" : "pin"} note: ${
-                        error instanceof Error ? error.message : "Unknown error"
-                      }`,
-                    );
-                  }
-                }}
-              >
-                <PinIcon
-                  className={cn(
-                    "w-5 h-5 stroke-[1.3]",
-                    isPinned && "fill-current",
-                  )}
-                />
-              </IconButton>
-            </Tooltip>
-          )}
+
           {currentNote && (
             <Tooltip content={`Find in note (${mod}${isMac ? "" : "+"}F)`}>
               <IconButton onClick={openEditorSearch}>
@@ -2339,28 +2146,14 @@ export function Editor({
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
-          {onSaveToFolder && (
-            <Tooltip content="Save in Folder">
-              <IconButton
-                onClick={onSaveToFolder}
-                aria-label="Save in Folder"
-                disabled={saveToFolderDisabled}
-              >
-                {saveToFolderDisabled ? (
-                  <SpinnerIcon className="w-4.25 h-4.25 animate-spin" />
-                ) : (
-                  <FolderPlusIcon className="w-4.25 h-4.25 stroke-[1.6]" />
-                )}
-              </IconButton>
-            </Tooltip>
-          )}
+
         </div>
       </div>
 
       {/* Format Bar – transition only after initial mount to avoid height animation on note load */}
       <div
         data-format-bar
-        className={`${focusMode || sourceMode ? "opacity-0 max-h-0 overflow-hidden pointer-events-none" : "opacity-100 max-h-20"} ${hasTransitioned ? `transition-all duration-400 ${needsSidebarDelay ? "delay-200" : ""}` : ""}`}
+        className={`${focusMode || sourceMode ? "opacity-0 max-h-0 overflow-hidden pointer-events-none" : "opacity-100 max-h-20"} ${hasTransitioned ? "transition-all duration-400" : ""}`}
       >
         <FormatBar
           editor={editor}
