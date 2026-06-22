@@ -5,14 +5,6 @@ export interface NoteMetadata {
   modified: number;
 }
 
-export interface Note {
-  id: string;
-  title: string;
-  content: string;
-  path: string;
-  modified: number;
-}
-
 export interface ThemeSettings {
   mode: "light" | "dark" | "system";
 }
@@ -47,22 +39,10 @@ export type CustomColors = Partial<Record<ThemeColorKey, string>>;
 export interface Settings {
   theme: ThemeSettings;
   editorFont?: EditorFontSettings;
-  gitEnabled?: boolean;
-  foldersEnabled?: boolean;
-  pinnedNoteIds?: string[];
   textDirection?: TextDirection;
   editorWidth?: EditorWidth;
   customEditorWidthPx?: number;
-  defaultNoteName?: string;
   interfaceZoom?: number;
-  ignoredPatterns?: string[];
   customColorsLight?: CustomColors;
   customColorsDark?: CustomColors;
-}
-
-export interface FolderNode {
-  name: string;
-  path: string;
-  children: FolderNode[];
-  notes: NoteMetadata[];
 }

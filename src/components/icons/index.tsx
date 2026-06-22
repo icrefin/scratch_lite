@@ -953,46 +953,6 @@ export function ExternalLinkIcon({ className = "w-4.5 h-4.5" }: IconProps) {
   );
 }
 
-export function NoteIcon({ className = "w-4.5 h-4.5" }: IconProps) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-      <path d="M13 20l7 -7" />
-      <path d="M13 20v-6a1 1 0 0 1 1 -1h6v-7a2 2 0 0 0 -2 -2h-12a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7" />
-    </svg>
-  );
-}
-
-export function AddNoteIcon({ className = "w-4.5 h-4.5" }: IconProps) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-      <path d="M19 10h-14" />
-      <path d="M5 6h14" />
-      <path d="M14 14h-9" />
-      <path d="M5 18h6" />
-      <path d="M18 15v6" />
-      <path d="M15 18h6" />
-    </svg>
-  );
-}
-
 export function TrashIcon({ className = "w-4.5 h-4.5" }: IconProps) {
   return (
     <svg

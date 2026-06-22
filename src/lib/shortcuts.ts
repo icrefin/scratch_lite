@@ -15,27 +15,12 @@ export const shortcutCategories: ShortcutCategory[] = [
     title: "Navigation",
     shortcuts: [
       { keys: [mod, "P"], description: "Command palette" },
-      { keys: [mod, shift, "F"], description: "Search notes" },
-      { keys: [mod, "\\"], description: "Toggle sidebar" },
       { keys: [mod, ","], description: "Settings" },
       { keys: [mod, "/"], description: "Keyboard shortcuts" },
       { keys: [mod, "W"], description: "Close window" },
       { keys: [mod, "="], description: "Zoom in" },
       { keys: [mod, "-"], description: "Zoom out" },
       { keys: [mod, "0"], description: "Reset zoom" },
-    ],
-  },
-  {
-    title: "Notes",
-    shortcuts: [
-      { keys: [mod, "N"], description: "New note" },
-      { keys: [mod, "D"], description: "Duplicate note" },
-      { keys: [mod, "R"], description: "Reload note" },
-      { keys: ["Delete"], description: "Delete note" },
-      { keys: [mod, "Backspace"], description: "Delete note" },
-      { keys: ["↑", "↓"], description: "Navigate notes" },
-      { keys: ["Enter"], description: "Focus editor" },
-      { keys: ["Esc"], description: "Back to note list" },
     ],
   },
   {
@@ -55,10 +40,9 @@ export const shortcutCategories: ShortcutCategory[] = [
   {
     title: "Settings",
     shortcuts: [
-      { keys: [mod, "1"], description: "General" },
-      { keys: [mod, "2"], description: "Appearance" },
-      { keys: [mod, "3"], description: "Shortcuts" },
-      { keys: [mod, "4"], description: "About" },
+      { keys: [mod, "1"], description: "Appearance" },
+      { keys: [mod, "2"], description: "Shortcuts" },
+      { keys: [mod, "3"], description: "About" },
     ],
   },
   {

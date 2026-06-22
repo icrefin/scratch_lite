@@ -21,7 +21,7 @@ function ShortcutKeys({ keys }: { keys: string[] }) {
 }
 
 // Categories to show in settings (exclude Markdown Syntax)
-const settingsCategories = ["Navigation", "Notes", "Editor", "Settings"];
+const settingsCategories = ["Navigation", "Editor", "Settings"];
 
 export function ShortcutsSettingsSection() {
   return (
