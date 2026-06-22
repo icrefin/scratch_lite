@@ -1,12 +1,12 @@
 [package]
-name = "Scratch"
-version = "0.10.0"
-description = "An offline markdown-based notes app"
-authors = ["erictli"]
+name = "scratch-lite"
+version = "0.1.0"
+description = "A simplified markdown scratchpad based on Scratch"
+authors = ["icrefin"]
 edition = "2021"
 
 [lib]
-name = "scratch_lib"
+name = "scratch_lite_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -22,14 +22,9 @@ tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-notify = "6"
-tantivy = "0.22"
 tokio = { version = "1", features = ["fs", "sync"] }
 base64 = "0.22"
 url = "2"
-urlencoding = "2"
 open = "5"
 regex = "1"
-walkdir = "2"
 tauri-plugin-single-instance = "2"
-chrono = "0.4"

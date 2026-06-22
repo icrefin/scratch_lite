@@ -1,74 +1,30 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { NotesProvider, useNotes } from "./context/NotesContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext";
-import { listen } from "@tauri-apps/api/event";
-import { GitProvider } from "./context/GitContext";
 import { TooltipProvider, Toaster } from "./components/ui";
-import { Sidebar } from "./components/layout/Sidebar";
-import { Editor } from "./components/editor/Editor";
+import { Editor, type PreviewModeData } from "./components/editor/Editor";
 import type { Editor as TiptapEditor } from "@tiptap/react";
-import { FolderPicker } from "./components/layout/FolderPicker";
 import { CommandPalette } from "./components/command-palette/CommandPalette";
 import { SettingsPage } from "./components/settings";
-import {
-  SpinnerIcon,
-  ClaudeIcon,
-  CodexIcon,
-  OpenCodeIcon,
-  OllamaIcon,
-} from "./components/icons";
 import { AiEditModal } from "./components/ai/AiEditModal";
 import { AiResponseToast } from "./components/ai/AiResponseToast";
 import { KeyboardShortcutsModal } from "./components/shortcuts/KeyboardShortcutsModal";
-import { PreviewApp } from "./components/preview/PreviewApp";
-import {
-  check as checkForUpdate,
-  type Update,
-} from "@tauri-apps/plugin-updater";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import * as filesService from "./services/files";
 import * as aiService from "./services/ai";
 import type { AiProvider } from "./services/ai";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
-// Detect preview mode from URL search params
-function getWindowMode(): {
-  isPreview: boolean;
-  previewFile: string | null;
-} {
-  const params = new URLSearchParams(window.location.search);
-  const mode = params.get("mode");
-  const file = params.get("file");
-  return {
-    isPreview: mode === "preview" && !!file,
-    previewFile: file,
-  };
-}
-
-type ViewState = "notes" | "settings";
+type ViewState = "editor" | "settings";
 
 function AppContent() {
-  const {
-    notesFolder,
-    isLoading,
-    createNote,
-    duplicateNote,
-    notes,
-    selectedNoteId,
-    selectNote,
-    searchQuery,
-    searchResults,
-    reloadCurrentNote,
-    currentNote,
-    syncNotesFolder,
-  } = useNotes();
-  const { interfaceZoom, setInterfaceZoom, reloadSettings } = useTheme();
+  const { interfaceZoom, setInterfaceZoom } = useTheme();
   const interfaceZoomRef = useRef(interfaceZoom);
   interfaceZoomRef.current = interfaceZoom;
-  const currentNoteRef = useRef(currentNote);
-  currentNoteRef.current = currentNote;
+
+  const [view, setView] = useState<ViewState>("editor");
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [view, setView] = useState<ViewState>("notes");
-  const [sidebarVisible, setSidebarVisible] = useState(true);
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [aiEditing, setAiEditing] = useState(false);
@@ -76,14 +32,42 @@ function AppContent() {
   const [aiProvider, setAiProvider] = useState<AiProvider>("claude");
   const editorRef = useRef<TiptapEditor | null>(null);
 
-  // Listen for set-notes-folder event from CLI (scratch .)
-  // Placed here in AppContent where both NotesContext and ThemeContext are available
+  // Preview mode data (for the editor)
+  // Start with an unnamed empty file in memory
+  const [filePath, setFilePath] = useState<string | null>(null);
+  const [content, setContent] = useState<string | null>("");
+  const [title, setTitle] = useState("Untitled");
+  const [modified, setModified] = useState(() => Math.floor(Date.now() / 1000));
+  const [hasExternalChanges, setHasExternalChanges] = useState(false);
+  const [reloadVersion, setReloadVersion] = useState(0);
+  const recentlySavedRef = useRef(false);
+
+  const loadFile = useCallback(async (path: string) => {
+    try {
+      const result = await filesService.readFileDirect(path);
+      setFilePath(path);
+      setContent(result.content);
+      setTitle(result.title);
+      setModified(result.modified);
+      setHasExternalChanges(false);
+      // Add to recent files
+      await invoke("add_recent_file", { path });
+    } catch (error) {
+      console.error("Failed to load file:", error);
+      toast.error(`Failed to load file: ${error}`);
+    }
+  }, []);
+
+  const loadFileRef = useRef(loadFile);
+  loadFileRef.current = loadFile;
+
+  // Listen for file-open events from backend (CLI args, Open With, drag-drop)
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    listen<string>("set-notes-folder", async (event) => {
-      await syncNotesFolder(event.payload);
-      await reloadSettings();
+    listen<string>("open-file", (event) => {
+      if (cancelled) return;
+      loadFile(event.payload);
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten = fn;
@@ -92,33 +76,234 @@ function AppContent() {
       cancelled = true;
       unlisten?.();
     };
-  }, [syncNotesFolder, reloadSettings]);
+  }, [loadFile]);
 
-  const toggleSidebar = useCallback(() => {
-    setSidebarVisible((prev) => !prev);
+  // Listen for menu events from native menu bar
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen<string>("menu-event", (event) => {
+      if (cancelled) return;
+      switch (event.payload) {
+        case "new_file": {
+          const dialog = async () => {
+            try {
+              const { save: saveFile } = await import("@tauri-apps/plugin-dialog");
+              const path = await saveFile({
+                filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+                defaultPath: "untitled.md",
+              });
+              if (path) {
+                await invoke("write_file", { path, contents: new TextEncoder().encode("# Untitled\n\n") });
+                loadFileRef.current(path);
+              }
+            } catch (error) {
+              console.error("Failed to create new file:", error);
+              toast.error("Failed to create new file");
+            }
+          };
+          dialog();
+          break;
+        }
+        case "open":
+          openFileDialogRef.current();
+          break;
+        case "save": {
+          const editor = editorRef.current;
+          if (editor) {
+            const manager = editor.storage.markdown?.manager;
+            const markdown = manager
+              ? manager.serialize(editor.getJSON())
+              : editor.getText();
+            saveRef.current(markdown);
+          }
+          break;
+        }
+        case "save_as": {
+          const editor = editorRef.current;
+          if (editor) {
+            const manager = editor.storage.markdown?.manager;
+            const markdown = manager
+              ? manager.serialize(editor.getJSON())
+              : editor.getText();
+            const dialog = async () => {
+              const fp = await import("@tauri-apps/plugin-dialog").then((m) =>
+                m.save({
+                  filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+                  defaultPath: "untitled.md",
+                })
+              );
+              if (!fp) return;
+              try {
+                const result = await filesService.saveFileDirect(fp, markdown);
+                recentlySavedRef.current = true;
+                setFilePath(fp);
+                setModified(result.modified);
+                setTitle(result.title);
+                setHasExternalChanges(false);
+              } catch (error) {
+                console.error("Failed to save file:", error);
+                toast.error(`Failed to save: ${error}`);
+              }
+            };
+            dialog();
+          }
+          break;
+        }
+        case "print":
+          window.dispatchEvent(new CustomEvent("print-note"));
+          break;
+        case "settings":
+          toggleSettingsRef.current();
+          break;
+        case "zoom_in": {
+          const newZoom = Math.round(Math.min(interfaceZoomRef.current + 0.05, 1.5) * 20) / 20;
+          setInterfaceZoom(newZoom);
+          break;
+        }
+        case "zoom_out": {
+          const newZoom = Math.round(Math.max(interfaceZoomRef.current - 0.05, 0.7) * 20) / 20;
+          setInterfaceZoom(newZoom);
+          break;
+        }
+        case "zoom_reset":
+          setInterfaceZoom(1.0);
+          break;
+        case "toggle_focus":
+          toggleFocusModeRef.current();
+          break;
+        case "toggle_source":
+          window.dispatchEvent(new CustomEvent("toggle-source-mode"));
+          break;
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Check URL params for file on mount (from CLI args)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const file = params.get("file");
+    if (file) {
+      loadFile(decodeURIComponent(file));
+    }
+  }, [loadFile]);
+
+  // Listen for window focus to detect external changes
+  useEffect(() => {
+    const handleFocus = async () => {
+      if (recentlySavedRef.current || !filePath) {
+        recentlySavedRef.current = false;
+        return;
+      }
+      try {
+        const result = await filesService.readFileDirect(filePath);
+        if (result.modified !== modified && content !== null) {
+          setHasExternalChanges(true);
+        }
+      } catch {
+        // File may have been deleted
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [filePath, modified, content]);
+
+  const save = useCallback(
+    async (newContent: string) => {
+      let targetPath = filePath;
+
+      // Unnamed file — trigger Save As dialog
+      if (!targetPath) {
+        try {
+          const { save: saveFile } = await import("@tauri-apps/plugin-dialog");
+          const selected = await saveFile({
+            filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+            defaultPath: "untitled.md",
+          });
+          if (!selected) return;
+          targetPath = selected;
+        } catch (error) {
+          console.error("Failed to save:", error);
+          toast.error(`Failed to save: ${error}`);
+          return;
+        }
+      }
+
+      try {
+        const result = await filesService.saveFileDirect(targetPath, newContent);
+        recentlySavedRef.current = true;
+        setFilePath(targetPath);
+        setModified(result.modified);
+        setTitle(result.title);
+        setHasExternalChanges(false);
+      } catch (error) {
+        console.error("Failed to save file:", error);
+        toast.error(`Failed to save: ${error}`);
+      }
+    },
+    [filePath],
+  );
+
+  const saveRef = useRef(save);
+  saveRef.current = save;
+
+  const reload = useCallback(async () => {
+    if (!filePath) return;
+    try {
+      const result = await filesService.readFileDirect(filePath);
+      setContent(result.content);
+      setTitle(result.title);
+      setModified(result.modified);
+      setHasExternalChanges(false);
+      setReloadVersion((v) => v + 1);
+    } catch (error) {
+      console.error("Failed to reload file:", error);
+      toast.error(`Failed to reload: ${error}`);
+    }
+  }, [filePath]);
+
+  const openFileDialog = useCallback(async () => {
+    try {
+      const selected = await invoke<string | null>("open_file_dialog");
+      if (selected) {
+        loadFile(selected);
+      }
+    } catch (error) {
+      console.error("Failed to open file:", error);
+      toast.error("Failed to open file");
+    }
+  }, [loadFile]);
+
+  const openFileDialogRef = useRef(openFileDialog);
+  openFileDialogRef.current = openFileDialog;
+
+  const toggleSettings = useCallback(() => {
+    setView((prev) => (prev === "settings" ? "editor" : "settings"));
+  }, []);
+
+  const toggleSettingsRef = useRef(toggleSettings);
+  toggleSettingsRef.current = toggleSettings;
+
+  const closeSettings = useCallback(() => {
+    setView("editor");
   }, []);
 
   const toggleFocusMode = useCallback(() => {
-    setFocusMode((prev) => {
-      // Don't enter focus mode without a selected note
-      if (!prev && !selectedNoteId) return prev;
-      if (prev) {
-        // Exiting focus mode — always restore sidebar
-        setSidebarVisible(true);
-      }
-      return !prev;
-    });
-  }, [selectedNoteId]);
-
-  const toggleSettings = useCallback(() => {
-    setView((prev) => (prev === "settings" ? "notes" : "settings"));
+    setFocusMode((prev) => !prev);
   }, []);
 
-  const closeSettings = useCallback(() => {
-    setView("notes");
-  }, []);
+  const toggleFocusModeRef = useRef(toggleFocusMode);
+  toggleFocusModeRef.current = toggleFocusMode;
 
-  // Go back to command palette from AI modal
+  // Back to command palette from AI modal
   const handleBackToPalette = useCallback(() => {
     setAiModalOpen(false);
     setPaletteOpen(true);
@@ -127,8 +312,8 @@ function AppContent() {
   // AI Edit handler
   const handleAiEdit = useCallback(
     async (prompt: string, ollamaModel?: string) => {
-      if (!currentNote) {
-        toast.error("No note selected");
+      if (!filePath) {
+        toast.error("No file open");
         return;
       }
 
@@ -137,28 +322,25 @@ function AppContent() {
       try {
         let result: aiService.AiExecutionResult;
         if (aiProvider === "codex") {
-          result = await aiService.executeCodexEdit(currentNote.path, prompt);
+          result = await aiService.executeCodexEdit(filePath, prompt);
         } else if (aiProvider === "opencode") {
-          result = await aiService.executeOpenCodeEdit(currentNote.path, prompt);
+          result = await aiService.executeOpenCodeEdit(filePath, prompt);
         } else if (aiProvider === "ollama") {
           result = await aiService.executeOllamaEdit(
-            currentNote.path,
+            filePath,
             prompt,
             ollamaModel || "qwen3:8b",
           );
         } else {
-          result = await aiService.executeClaudeEdit(currentNote.path, prompt);
+          result = await aiService.executeClaudeEdit(filePath, prompt);
         }
 
-        // Reload the current note from disk
-        await reloadCurrentNote();
+        // Reload file from disk
+        await reload();
 
         // Show results
         if (result.success) {
-          // Close modal after success
           setAiModalOpen(false);
-
-          // Show success toast with provider response
           toast(
             <AiResponseToast output={result.output} provider={aiProvider} />,
             {
@@ -185,50 +367,41 @@ function AppContent() {
         setAiEditing(false);
       }
     },
-    [aiProvider, currentNote, reloadCurrentNote],
+    [aiProvider, filePath, reload],
   );
-
-  // Memoize display items to prevent unnecessary recalculations
-  const displayItems = useMemo(() => {
-    return searchQuery.trim() ? searchResults : notes;
-  }, [searchQuery, searchResults, notes]);
 
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       const isInEditor = !!target.closest(".ProseMirror");
-      const isInInput =
-        target.tagName === "INPUT" || target.tagName === "TEXTAREA";
-      const isEditorEmpty =
-        isInEditor && currentNoteRef.current?.content.trim() === "";
 
-      // Cmd+, - Toggle settings (always works, even in settings)
+      // Cmd+, - Toggle settings (always works)
       if ((e.metaKey || e.ctrlKey) && e.key === ",") {
         e.preventDefault();
         toggleSettings();
         return;
       }
 
-      // Cmd+= or Cmd++ - Zoom in (works everywhere, including settings)
+      // Cmd+= or Cmd++ - Zoom in
       if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
-        setInterfaceZoom((prev) => prev + 0.05);
         const newZoom = Math.round(Math.min(interfaceZoomRef.current + 0.05, 1.5) * 20) / 20;
+        setInterfaceZoom(newZoom);
         toast(`Zoom ${Math.round(newZoom * 100)}%`, { id: "zoom", duration: 1500 });
         return;
       }
 
-      // Cmd+- - Zoom out (works everywhere, including settings)
+      // Cmd+- - Zoom out
       if ((e.metaKey || e.ctrlKey) && (e.key === "-" || e.key === "_")) {
         e.preventDefault();
-        setInterfaceZoom((prev) => prev - 0.05);
         const newZoom = Math.round(Math.max(interfaceZoomRef.current - 0.05, 0.7) * 20) / 20;
+        setInterfaceZoom(newZoom);
         toast(`Zoom ${Math.round(newZoom * 100)}%`, { id: "zoom", duration: 1500 });
         return;
       }
 
-      // Cmd+0 - Reset zoom (works everywhere, including settings)
+      // Cmd+0 - Reset zoom
       if ((e.metaKey || e.ctrlKey) && e.key === "0") {
         e.preventDefault();
         setInterfaceZoom(1.0);
@@ -236,10 +409,8 @@ function AppContent() {
         return;
       }
 
-      // Block all other shortcuts when in settings view
-      if (view === "settings") {
-        return;
-      }
+      // Block other shortcuts when in settings view
+      if (view === "settings") return;
 
       // Cmd+Shift+Enter - Toggle focus mode
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "Enter") {
@@ -249,11 +420,7 @@ function AppContent() {
       }
 
       // Cmd+Shift+M - Toggle markdown source mode
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        e.shiftKey &&
-        e.key.toLowerCase() === "m"
-      ) {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "m") {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("toggle-source-mode"));
         return;
@@ -266,13 +433,10 @@ function AppContent() {
         return;
       }
 
-      // Let dialogs handle their own keyboard events (Tab, Enter, etc.)
-      if (target.closest("[role='dialog'], [role='alertdialog']")) {
-        return;
-      }
+      // Let dialogs handle their own keyboard events
+      if (target.closest("[role='dialog'], [role='alertdialog']")) return;
 
-      // Trap Tab/Shift+Tab in notes view only - prevent focus navigation
-      // TipTap handles indentation internally before event bubbles up
+      // Trap Tab/Shift+Tab
       if (e.key === "Tab") {
         e.preventDefault();
         return;
@@ -292,6 +456,20 @@ function AppContent() {
         return;
       }
 
+      // Cmd+S - Save / Save As
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        const editor = editorRef.current;
+        if (editor) {
+          const manager = editor.storage.markdown?.manager;
+          const markdown = manager
+            ? manager.serialize(editor.getJSON())
+            : editor.getText();
+          saveRef.current(markdown);
+        }
+        return;
+      }
+
       // Cmd+/ - Open keyboard shortcuts
       if ((e.metaKey || e.ctrlKey) && e.key === "/") {
         e.preventDefault();
@@ -299,148 +477,56 @@ function AppContent() {
         return;
       }
 
-      // Cmd/Ctrl+Shift+F - Open sidebar search
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        e.shiftKey &&
-        e.key.toLowerCase() === "f"
-      ) {
+      // Cmd+O - Open file
+      if ((e.metaKey || e.ctrlKey) && e.key === "o") {
         e.preventDefault();
-        setSidebarVisible(true);
-        window.dispatchEvent(new CustomEvent("open-sidebar-search"));
+        openFileDialog();
         return;
       }
 
-      // Cmd+\ - Toggle sidebar
-      if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
-        e.preventDefault();
-        toggleSidebar();
-        return;
-      }
-
-      // Cmd+N - New note
+      // Cmd+N - New file (Save As dialog)
       if ((e.metaKey || e.ctrlKey) && e.key === "n") {
         e.preventDefault();
-        createNote();
+        const saveDialog = async () => {
+          try {
+            const { save: saveFile } = await import("@tauri-apps/plugin-dialog");
+            const path = await saveFile({
+              filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+              defaultPath: "untitled.md",
+            });
+            if (path) {
+              // Create empty file and load it
+              await invoke("write_file", { path, contents: new TextEncoder().encode("# Untitled\n\n") });
+              loadFile(path);
+            }
+          } catch (error) {
+            console.error("Failed to create new file:", error);
+            toast.error("Failed to create new file");
+          }
+        };
+        saveDialog();
         return;
       }
 
-      // Delete current note (note list focused, or editor on empty note)
-      if (
-        selectedNoteId &&
-        !isInInput &&
-        (e.key === "Delete" ||
-          (e.key === "Backspace" && (e.metaKey || e.ctrlKey))) &&
-        (!isInEditor || isEditorEmpty)
-      ) {
-        e.preventDefault();
-        window.dispatchEvent(
-          new CustomEvent("request-delete-note", { detail: selectedNoteId }),
-        );
-        return;
-      }
-
-      // Cmd+D - Duplicate current note
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        e.key.toLowerCase() === "d" &&
-        !isInEditor &&
-        !isInInput &&
-        selectedNoteId
-      ) {
-        e.preventDefault();
-        duplicateNote(selectedNoteId);
-        return;
-      }
-
-      // Cmd+R - Reload current note (pull external changes)
+      // Cmd+R - Reload file
       if ((e.metaKey || e.ctrlKey) && e.key === "r") {
         e.preventDefault();
-        reloadCurrentNote();
+        reload();
         return;
-      }
-
-      // Arrow keys for note navigation
-      // Skip if folder tree view is handling its own navigation
-      const isInFolderTree = !!(e.target as HTMLElement).closest("[data-folder-tree]");
-      if (
-        displayItems.length > 0 &&
-        (e.key === "ArrowDown" || e.key === "ArrowUp") &&
-        ((!isInEditor && !isInInput) || isEditorEmpty) &&
-        !isInFolderTree
-      ) {
-        e.preventDefault();
-        const currentIndex = displayItems.findIndex(
-          (n) => n.id === selectedNoteId,
-        );
-        let newIndex: number;
-
-        if (e.key === "ArrowDown") {
-          newIndex =
-            currentIndex < displayItems.length - 1 ? currentIndex + 1 : 0;
-        } else {
-          newIndex =
-            currentIndex > 0 ? currentIndex - 1 : displayItems.length - 1;
-        }
-
-        selectNote(displayItems[newIndex].id);
-        window.dispatchEvent(new CustomEvent("focus-note-list"));
-        return;
-      }
-
-      // Enter to focus editor
-      if (e.key === "Enter" && selectedNoteId && !isInEditor && !isInInput) {
-        e.preventDefault();
-        const editor = document.querySelector(".ProseMirror") as HTMLElement;
-        if (editor) {
-          editor.focus();
-        }
-        return;
-      }
-
-      // Escape to blur editor and go back to note list
-      if (e.key === "Escape" && isInEditor) {
-        e.preventDefault();
-        (target as HTMLElement).blur();
-        // Focus the note list for keyboard navigation
-        window.dispatchEvent(new CustomEvent("focus-note-list"));
-        return;
-      }
-    };
-
-    // Disable right-click context menu except in editor
-    const handleContextMenu = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      // Allow context menu in editor (prose class), inputs, and note list sidebar
-      const isInEditor =
-        target.closest(".prose") || target.closest(".ProseMirror");
-      const isInput =
-        target.tagName === "INPUT" || target.tagName === "TEXTAREA";
-      const isInNoteList = target.closest("[data-note-list]");
-      if (!isInEditor && !isInput && !isInNoteList) {
-        e.preventDefault();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("contextmenu", handleContextMenu);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("contextmenu", handleContextMenu);
-    };
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
-    createNote,
-    duplicateNote,
-    displayItems,
-    reloadCurrentNote,
-    selectedNoteId,
-    selectNote,
     toggleSettings,
-    toggleSidebar,
     toggleFocusMode,
+    setInterfaceZoom,
     focusMode,
     view,
-    setInterfaceZoom,
+    openFileDialog,
+    reload,
+    loadFile,
   ]);
 
   const handleClosePalette = useCallback(() => {
@@ -448,20 +534,9 @@ function AppContent() {
     editorRef.current?.commands.focus();
   }, []);
 
-  if (isLoading) {
-    return (
-      <div className="h-full min-h-0 flex items-center justify-center bg-bg-secondary">
-        <div className="text-text-muted/70 text-sm flex items-center gap-1.5 font-medium">
-          <SpinnerIcon className="w-4.5 h-4.5 stroke-[1.5] animate-spin" />
-          Initializing Scratch...
-        </div>
-      </div>
-    );
-  }
-
-  if (!notesFolder) {
-    return <FolderPicker />;
-  }
+  const previewData: PreviewModeData | undefined = content !== null
+    ? { content, title, filePath, modified, hasExternalChanges, reloadVersion, save, reload, autoSave: !!filePath }
+    : undefined;
 
   return (
     <>
@@ -469,22 +544,13 @@ function AppContent() {
         {view === "settings" ? (
           <SettingsPage onBack={closeSettings} />
         ) : (
-          <>
-            <div
-              data-sidebar
-              className={`transition-all duration-500 ease-out overflow-hidden ${!sidebarVisible || focusMode ? "opacity-0 -translate-x-4 w-0 pointer-events-none" : "opacity-100 translate-x-0 w-64"}`}
-            >
-              <Sidebar onOpenSettings={toggleSettings} />
-            </div>
-            <Editor
-              onToggleSidebar={toggleSidebar}
-              sidebarVisible={sidebarVisible}
-              focusMode={focusMode}
-              onEditorReady={(editor) => {
-                editorRef.current = editor;
-              }}
-            />
-          </>
+          <Editor
+            previewMode={previewData}
+            onEditorReady={(editor) => {
+              editorRef.current = editor;
+            }}
+            focusMode={focusMode}
+          />
         )}
       </div>
 
@@ -516,6 +582,7 @@ function AppContent() {
         focusMode={focusMode}
         onToggleFocusMode={toggleFocusMode}
         editorRef={editorRef}
+        currentNote={previewData && previewData.content !== null ? { title: previewData.title, content: previewData.content } : null}
       />
       <AiEditModal
         open={aiModalOpen}
@@ -529,23 +596,14 @@ function AppContent() {
       {aiEditing && (
         <div className="fixed inset-0 bg-bg/50 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="flex items-center gap-2">
-            {aiProvider === "codex" ? (
-              <CodexIcon className="w-4.5 h-4.5 fill-text-muted animate-spin-slow" />
-            ) : aiProvider === "opencode" ? (
-              <OpenCodeIcon className="w-4.5 h-4.5 fill-text-muted animate-pulse-gentle" />
-            ) : aiProvider === "ollama" ? (
-              <OllamaIcon className="w-4.5 h-4.5 fill-text-muted animate-bounce-gentle" />
-            ) : (
-              <ClaudeIcon className="w-4.5 h-4.5 fill-text-muted animate-spin-slow" />
-            )}
             <div className="text-sm font-medium text-text">
               {aiProvider === "codex"
-                ? "Codex is editing your note..."
+                ? "Codex is editing..."
                 : aiProvider === "opencode"
-                  ? "OpenCode is editing your note..."
-                : aiProvider === "ollama"
-                  ? "Ollama is editing your note..."
-                  : "Claude is editing your note..."}
+                  ? "OpenCode is editing..."
+                  : aiProvider === "ollama"
+                    ? "Ollama is editing..."
+                    : "Claude is editing..."}
             </div>
           </div>
         </div>
@@ -554,86 +612,8 @@ function AppContent() {
   );
 }
 
-// Shared update check — used by startup and manual "Check for Updates"
-async function showUpdateToast(): Promise<"update" | "no-update" | "error"> {
-  try {
-    const update = await checkForUpdate();
-    if (update) {
-      toast(<UpdateToast update={update} toastId="update-toast" />, {
-        id: "update-toast",
-        duration: Infinity,
-        closeButton: true,
-      });
-      return "update";
-    }
-    return "no-update";
-  } catch (err) {
-    // Network errors and 404s (no release published yet) are not real failures
-    const msg = String(err);
-    if (
-      msg.includes("404") ||
-      msg.includes("network") ||
-      msg.includes("Could not fetch")
-    ) {
-      return "no-update";
-    }
-    console.error("Update check failed:", err);
-    return "error";
-  }
-}
-
-export { showUpdateToast };
-
-function UpdateToast({
-  update,
-  toastId,
-}: {
-  update: Update;
-  toastId: string | number;
-}) {
-  const [installing, setInstalling] = useState(false);
-
-  const handleUpdate = async () => {
-    setInstalling(true);
-    try {
-      await update.downloadAndInstall();
-      toast.dismiss(toastId);
-      toast.success("Update installed! Restart Scratch to apply.", {
-        duration: Infinity,
-        closeButton: true,
-      });
-    } catch (err) {
-      console.error("Update failed:", err);
-      toast.error("Update failed. Please try again later.");
-      setInstalling(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="font-medium text-sm">
-        Update Available: v{update.version}
-      </div>
-      {update.body && (
-        <div className="text-xs text-text-muted line-clamp-3">
-          {update.body}
-        </div>
-      )}
-      <button
-        onClick={handleUpdate}
-        disabled={installing}
-        className="self-start mt-1 text-xs font-medium px-3 py-1.5 rounded-md bg-text text-bg hover:opacity-90 disabled:opacity-50 transition-opacity"
-      >
-        {installing ? "Installing..." : "Update Now"}
-      </button>
-    </div>
-  );
-}
-
 function App() {
-  const { isPreview, previewFile } = useMemo(getWindowMode, []);
-
-  // Cmd/Ctrl+W — close window (works in both preview and folder mode)
+  // Cmd/Ctrl+W — close window
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "w") {
@@ -645,7 +625,7 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Add platform class for OS-specific styling (e.g., keyboard shortcuts)
+  // Add platform class for OS-specific styling
   useEffect(() => {
     const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
     document.documentElement.classList.add(
@@ -653,35 +633,11 @@ function App() {
     );
   }, []);
 
-  // Check for app updates on startup (folder mode only)
-  useEffect(() => {
-    if (isPreview) return;
-    const timer = setTimeout(() => showUpdateToast(), 3000);
-    return () => clearTimeout(timer);
-  }, [isPreview]);
-
-  // Preview mode: lightweight editor without sidebar, search, git
-  if (isPreview && previewFile) {
-    return (
-      <ThemeProvider>
-        <Toaster />
-        <TooltipProvider>
-          <PreviewApp filePath={decodeURIComponent(previewFile)} />
-        </TooltipProvider>
-      </ThemeProvider>
-    );
-  }
-
-  // Folder mode: full app with sidebar, search, git, etc.
   return (
     <ThemeProvider>
       <Toaster />
       <TooltipProvider>
-        <NotesProvider>
-          <GitProvider>
-            <AppContent />
-          </GitProvider>
-        </NotesProvider>
+        <AppContent />
       </TooltipProvider>
     </ThemeProvider>
   );

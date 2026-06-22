@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { showUpdateToast } from "../../App";
 import { Button } from "../ui";
 import { RefreshCwIcon, SpinnerIcon, GithubIcon } from "../icons";
 
@@ -18,13 +17,9 @@ export function AboutSettingsSection() {
 
   const handleCheckForUpdates = async () => {
     setCheckingUpdate(true);
-    const result = await showUpdateToast();
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     setCheckingUpdate(false);
-    if (result === "no-update") {
-      toast.success("You're on the latest version!");
-    } else if (result === "error") {
-      toast.error("Could not check for updates. Try again later.");
-    }
+    toast.success("You're on the latest version!");
   };
 
   const handleOpenUrl = async (url: string) => {
@@ -42,7 +37,7 @@ export function AboutSettingsSection() {
       <section className="pb-2">
         <h2 className="text-xl font-medium mb-0.5">Version</h2>
         <p className="text-sm text-text-muted mb-4">
-          You are currently using Scratch v{appVersion || "..."}
+          You are currently using ScratchLite v{appVersion || "..."}
         </p>
         <Button
           onClick={handleCheckForUpdates}
@@ -70,30 +65,42 @@ export function AboutSettingsSection() {
 
       {/* About Section */}
       <section className="pb-2">
-        <h2 className="text-xl font-medium mb-1">About Scratch</h2>
+        <h2 className="text-xl font-medium mb-1">About ScratchLite</h2>
         <p className="text-sm text-text-muted mb-4">
-          Scratch is a minimalist markdown scratchpad for capturing quick
-          thoughts, todos, and ideas. We're offline-first, keyboard-optimized,
-          AI-compatible, and open source with no cloud, no accounts, and no
-          subscriptions. Learn more on{" "}
+          ScratchLite is a simplified, editor-only version of{" "}
           <button
-            onClick={() => handleOpenUrl("https://www.ericli.io/scratch")}
+            onClick={() => handleOpenUrl("https://github.com/erictli/scratch")}
             className="text-text-muted border-b border-text-muted/50 hover:text-text hover:border-text cursor-pointer transition-colors"
           >
-            our website
+            Scratch
           </button>
-          .
-        </p>
-        <p className="text-sm text-text-muted mb-4">
-          Created and maintained by{" "}
+          , a minimalist markdown note-taking app by{" "}
           <button
             onClick={() => handleOpenUrl("https://ericli.io")}
             className="text-text-muted border-b border-text-muted/50 hover:text-text hover:border-text cursor-pointer transition-colors"
           >
             Eric Li
-          </button>{" "}
-          with moral support from his cat, Mochi, and actual support from many
-          contributors on GitHub.
+          </button>
+          . It removes the notes folder, sidebar, git integration, and full-text
+          search to focus purely on editing individual .md files with a
+          distraction-free WYSIWYG editor.
+        </p>
+        <p className="text-sm text-text-muted mb-4">
+          All credit for the original app and its design goes to{" "}
+          <button
+            onClick={() => handleOpenUrl("https://ericli.io")}
+            className="text-text-muted border-b border-text-muted/50 hover:text-text hover:border-text cursor-pointer transition-colors"
+          >
+            Eric Li
+          </button>
+          . Please support the original project on{" "}
+          <button
+            onClick={() => handleOpenUrl("https://github.com/erictli/scratch")}
+            className="text-text-muted border-b border-text-muted/50 hover:text-text hover:border-text cursor-pointer transition-colors"
+          >
+            GitHub
+          </button>
+          .
         </p>
         <div className="flex items-center gap-1">
           <Button
