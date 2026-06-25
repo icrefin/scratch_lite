@@ -4,6 +4,7 @@ import {
   useRef,
   useCallback,
   useState,
+  useMemo,
 } from "react";
 import {
   useEditor,
@@ -12,6 +13,8 @@ import {
   ReactNodeViewRenderer,
   type Editor as TiptapEditor,
 } from "@tiptap/react";
+import { VimMode, getVimMode } from "vim-prose/tiptap";
+import "vim-prose/style.css";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Link from "@tiptap/extension-link";
@@ -492,7 +495,7 @@ export function Editor({
   const hasExternalChanges = previewMode?.hasExternalChanges ?? false;
   const reloadCurrentNote = previewMode?.reload ?? (() => {});
   const reloadVersion = previewMode?.reloadVersion ?? 0;
-  const { textDirection } = useTheme();
+  const { textDirection, vimMode } = useTheme();
   const [isSaving, setIsSaving] = useState(false);
   // Force re-render when selection changes to update toolbar active states
   const [, setSelectionKey] = useState(0);
@@ -523,6 +526,16 @@ export function Editor({
   >([]);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // Vim command bar state
+  const [vimCommandVisible, setVimCommandVisible] = useState(false);
+  const [vimCommandText, setVimCommandText] = useState("");
+  const [vimCommandError, setVimCommandError] = useState("");
+  const vimCommandInputRef = useRef<HTMLInputElement>(null);
+  const vimCommandVisibleRef = useRef(false);
+  const setVimCommandVisibleWithRef = useCallback((visible: boolean) => {
+    vimCommandVisibleRef.current = visible;
+    setVimCommandVisible(visible);
+  }, []);
   const saveTimeoutRef = useRef<number | null>(null);
   const linkPopupRef = useRef<TippyInstance | null>(null);
   const blockMathPopupRef = useRef<TippyInstance | null>(null);
@@ -971,9 +984,8 @@ export function Editor({
     });
   }, [closeBlockMathPopup, handleEditBlockMath]);
 
-  const editor = useEditor({
-    textDirection,
-    extensions: [
+  const extensions = useMemo(
+    () => [
       StarterKit.configure({
         heading: {
           levels: [1, 2, 3, 4, 5, 6],
@@ -1038,6 +1050,7 @@ export function Editor({
       }),
       Frontmatter,
       Markdown.configure({}),
+      ...(vimMode ? [VimMode] : []),
       SearchHighlight.configure({
         matches: [],
         currentIndex: 0,
@@ -1056,6 +1069,12 @@ export function Editor({
         },
       }),
     ],
+    [vimMode, lowlight, closeBlockMathPopup, handleEditBlockMath],
+  );
+
+  const editor = useEditor({
+    textDirection,
+    extensions,
     editorProps: {
       attributes: {
         class:
@@ -1084,8 +1103,6 @@ export function Editor({
       // Trap Tab key inside the editor
       handleKeyDown: (_view, event) => {
         if (event.key === "Tab") {
-          // Allow default tab behavior (indent in lists, etc.)
-          // but prevent focus from leaving the editor
           return false;
         }
         return false;
@@ -1186,7 +1203,7 @@ export function Editor({
     },
     // Prevent flash of unstyled content during initial render
     immediatelyRender: false,
-  });
+  }, [vimMode]);  // recreate editor when vimMode toggles
 
   // Track which note's content is currently loaded in the editor
   const loadedNoteIdRef = useRef<string | null>(null);
@@ -1685,6 +1702,49 @@ export function Editor({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [editor, currentNote, openEditorSearch]);
 
+  // Global keydown listener for Vim command bar (":")
+  useEffect(() => {
+    if (!vimMode) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== ":") return;
+      if (vimCommandVisibleRef.current) return;
+      const ed = editorRef.current;
+      if (!ed) return;
+      try {
+        const mode = getVimMode(ed);
+        if (mode === "normal") {
+          e.preventDefault();
+          e.stopPropagation();
+          setVimCommandText("");
+          setVimCommandError("");
+          setVimCommandVisibleWithRef(true);
+          setTimeout(() => vimCommandInputRef.current?.focus(), 0);
+        }
+      } catch {
+        // Silently ignore if vim state not available
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [vimMode]);  // intentionally not re-adding on vimCommandVisible changes
+
+  // Ensure the editor has focus for Escape key (vim-prose needs focus to handle it)
+  useEffect(() => {
+    if (!vimMode) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const ed = editorRef.current;
+      if (e.key === "Escape" && ed && !ed.isFocused) {
+        ed.commands.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    // Also focus the editor when vim mode activates
+    if (editorRef.current) {
+      editorRef.current.commands.focus();
+    }
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [vimMode]);
+
   // Clear search on note switch
   useEffect(() => {
     if (currentNote?.id) {
@@ -1958,6 +2018,138 @@ export function Editor({
       }, 300);
     },
     [currentNote, saveNote],
+  );
+
+  const handleVimCommand = useCallback(
+    (cmd: string) => {
+      const editor = editorRef.current;
+      if (!editor) return;
+
+      // Substitute: :s/old/new/g or :%s/old/new/g
+      const subMatch = cmd.match(/^(%?)s\/([^/]*)\/([^/]*)\/([gci]*)$/);
+      if (subMatch) {
+        const global_ = subMatch[1] === "%";
+        const pattern = subMatch[2];
+        const replacement = subMatch[3];
+        const flags = subMatch[4];
+        const replaceAll = flags.includes("g");
+        const ignoreCase = flags.includes("i");
+
+        try {
+          const regex = new RegExp(pattern, `${ignoreCase ? "i" : ""}g`);
+          const { doc } = editor.state;
+          let tr = editor.state.tr;
+          let count = 0;
+
+          if (global_) {
+            doc.descendants((node, pos) => {
+              if (node.isText && node.text) {
+                const text = node.text as string;
+                const matches = text.matchAll(regex);
+                for (const match of matches) {
+                  if (match.index !== undefined) {
+                    const from = pos + match.index;
+                    const to = from + match[0].length;
+                    tr = tr.replaceWith(
+                      from,
+                      to,
+                      editor.state.schema.text(replacement),
+                    );
+                    count++;
+                    if (!replaceAll) break;
+                  }
+                }
+              }
+            });
+          } else {
+            const { $from, $to } = editor.state.selection;
+            const lineFrom = $from.before($from.depth);
+            const lineTo = $to.after($to.depth);
+            const lineText = doc.textBetween(lineFrom, lineTo);
+            const match = regex.exec(lineText);
+            if (match && match.index !== undefined) {
+              const from = lineFrom + match.index;
+              const to = from + match[0].length;
+              tr = tr.replaceWith(
+                from,
+                to,
+                editor.state.schema.text(replacement),
+              );
+              count++;
+            }
+          }
+
+          if (count > 0) {
+            editor.view.dispatch(tr);
+            setVimCommandError("");
+            setVimCommandText(
+              `Substituted ${count} match${count > 1 ? "es" : ""}`,
+            );
+          } else {
+            setVimCommandError("Pattern not found");
+          }
+        } catch (e) {
+          setVimCommandError(`Invalid pattern: ${(e as Error).message}`);
+        }
+        setTimeout(() => {
+          setVimCommandVisibleWithRef(false);
+          editor.commands.focus();
+        }, 1500);
+        return;
+      }
+
+      // :nohl[search] - clear search highlighting
+      if (/^nohl(?:search)?$/.test(cmd)) {
+        setSearchQuery("");
+        setSearchMatches([]);
+        setCurrentMatchIndex(0);
+        if (editor) {
+          updateSearchDecorations([], 0, editor);
+        }
+        setVimCommandVisibleWithRef(false);
+        setVimCommandError("");
+        editor.commands.focus();
+        return;
+      }
+
+      // :w - save
+      if (cmd === "w") {
+        setVimCommandVisibleWithRef(false);
+        if (currentNote && saveImmediately) {
+          const ed = editorRef.current;
+          if (ed) {
+            const content = getMarkdown(ed);
+            saveImmediately(currentNote.id, content);
+          }
+        }
+        editor.commands.focus();
+        return;
+      }
+
+      // :q - close/quit
+      if (cmd === "q") {
+        setVimCommandVisibleWithRef(false);
+        editor.commands.focus();
+        return;
+      }
+
+      // :wq - save and quit
+      if (cmd === "wq") {
+        if (currentNote && saveImmediately) {
+          const ed = editorRef.current;
+          if (ed) {
+            const content = getMarkdown(ed);
+            saveImmediately(currentNote.id, content);
+          }
+        }
+        setVimCommandVisibleWithRef(false);
+        editor.commands.focus();
+        return;
+      }
+
+      setVimCommandError(`Unknown command: :${cmd}`);
+    },
+    [currentNote, saveImmediately, getMarkdown],
   );
 
   if (!currentNote) {
@@ -2405,6 +2597,44 @@ export function Editor({
             </>
           )}
         </div>
+
+        {/* Vim command bar */}
+        {vimMode && vimCommandVisible && (
+          <div className="absolute bottom-0 left-0 right-0 bg-bg-muted border-t border-border px-3 py-2 flex items-center gap-2 z-20 animate-in slide-in-from-bottom-1 duration-100">
+            <span className="text-text-muted text-sm font-mono shrink-0">
+              :
+            </span>
+            <input
+              ref={vimCommandInputRef}
+              type="text"
+              value={vimCommandText}
+              onChange={(e) => {
+                setVimCommandText(e.target.value);
+                setVimCommandError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleVimCommand(vimCommandText);
+                } else if (e.key === "Escape") {
+                  setVimCommandVisibleWithRef(false);
+                  setVimCommandError("");
+                  editorRef.current?.commands.focus();
+                }
+              }}
+              className={`flex-1 bg-transparent text-sm text-text font-mono outline-none placeholder-text-muted ${
+                vimCommandError ? "text-red-500" : ""
+              }`}
+              placeholder={
+                vimCommandError || "Enter Ex command (e.g., :%s/old/new/g)"
+              }
+            />
+            {vimCommandError && (
+              <span className="text-red-500 text-xs font-mono shrink-0">
+                {vimCommandError}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

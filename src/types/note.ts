@@ -43,6 +43,7 @@ export interface Settings {
   editorWidth?: EditorWidth;
   customEditorWidthPx?: number;
   interfaceZoom?: number;
+  vimMode?: boolean;
   customColorsLight?: CustomColors;
   customColorsDark?: CustomColors;
 }

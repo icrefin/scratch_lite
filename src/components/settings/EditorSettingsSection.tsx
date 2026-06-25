@@ -79,6 +79,8 @@ export function AppearanceSettingsSection() {
     resetAllCustomColors,
   } = useTheme();
 
+  const { vimMode, setVimMode } = useTheme();
+
   // Validated numeric change handler
   const handleNumericChange = (
     field: "baseFontSize" | "lineHeight",
@@ -323,6 +325,28 @@ export function AppearanceSettingsSection() {
               </div>
             </div>
           )}
+
+          {/* Vim Mode */}
+          <div className="flex items-center justify-between">
+            <label className="text-sm text-text font-medium">
+              Vim Mode
+            </label>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={vimMode}
+              onClick={() => setVimMode(!vimMode)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                vimMode ? "bg-accent" : "bg-bg-muted"
+              }`}
+            >
+              <span
+                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
+                  vimMode ? "translate-x-[22px]" : "translate-x-[2px]"
+                }`}
+              />
+            </button>
+          </div>
 
           {/* Interface Zoom */}
           <div className="flex items-center justify-between">

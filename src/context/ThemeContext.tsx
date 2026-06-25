@@ -117,6 +117,8 @@ interface ThemeContextType {
   setCustomColor: (mode: "light" | "dark", key: ThemeColorKey, value: string) => void;
   resetCustomColor: (mode: "light" | "dark", key: ThemeColorKey) => void;
   resetAllCustomColors: (mode: "light" | "dark") => void;
+  vimMode: boolean;
+  setVimMode: (enabled: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | null>(null);
@@ -189,6 +191,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   );
   const [customColorsLight, setCustomColorsLightState] = useState<CustomColors>({});
   const [customColorsDark, setCustomColorsDarkState] = useState<CustomColors>({});
+  const [vimMode, setVimModeState] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
 
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">(() => {
@@ -247,6 +250,9 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       }
       if (settings.customColorsDark) {
         setCustomColorsDarkState(settings.customColorsDark);
+      }
+      if (typeof settings.vimMode === "boolean") {
+        setVimModeState(settings.vimMode);
       }
     } catch {
       // If settings can't be loaded, use defaults
@@ -544,6 +550,16 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     [],
   );
 
+  const setVimMode = useCallback(async (enabled: boolean) => {
+    setVimModeState(enabled);
+    try {
+      const settings = await getSettings();
+      await updateSettings({ ...settings, vimMode: enabled });
+    } catch (error) {
+      console.error("Failed to save vim mode:", error);
+    }
+  }, []);
+
   // Live CSS variable update during drag (no persistence)
   const setEditorMaxWidthLive = useCallback((value: string) => {
     document.documentElement.style.setProperty("--editor-max-width", value);
@@ -579,6 +595,8 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         setCustomColor,
         resetCustomColor,
         resetAllCustomColors,
+        vimMode,
+        setVimMode,
       }}
     >
       {children}
