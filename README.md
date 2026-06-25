@@ -13,7 +13,7 @@ ScratchLite removes:
 - **Full-text search** — No Tantivy search index
 - **Welcome screen** — Starts with a blank unnamed file instead
 
-Everything else — WYSIWYG editing, AI editing, export, focus mode, themes, keyboard shortcuts, command palette — remains intact.
+Everything else — WYSIWYG editing, export, focus mode, themes, keyboard shortcuts, command palette, vim mode — remains intact.
 
 ## Features
 
@@ -23,7 +23,7 @@ Everything else — WYSIWYG editing, AI editing, export, focus mode, themes, key
 - **Mermaid diagrams** — Flowcharts, sequence diagrams, and more
 - **KaTeX math** — Block and inline math rendering
 - **Focus mode** — Distraction-free writing (`Cmd+Shift+Enter`)
-- **AI editing** — Edit with Claude Code, Codex, OpenCode, or Ollama
+- **Vim mode** — Modal editing with Ex command bar (`:s`, `:nohl`, `:w`)
 - **Command palette** — `Cmd+P` for quick everything access
 - **Export** — Copy as Markdown, Plain Text, HTML; Print as PDF
 - **Customizable** — Theme, typography, page width, RTL text

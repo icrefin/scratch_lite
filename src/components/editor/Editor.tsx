@@ -2609,13 +2609,50 @@ export function Editor({
               type="text"
               value={vimCommandText}
               onChange={(e) => {
-                setVimCommandText(e.target.value);
+                const value = e.target.value;
+                setVimCommandText(value);
                 setVimCommandError("");
+                // Preview substitute matches as user types the pattern
+                const ed = editorRef.current;
+                const subPattern = value.match(/^(%?)s\/([^/]*)/);
+                if (subPattern && subPattern[2]) {
+                  const pattern = subPattern[2];
+                  try {
+                    const regex = new RegExp(pattern, "gi");
+                    if (ed) {
+                      const matches: Array<{ from: number; to: number }> = [];
+                      ed.state.doc.descendants((node, pos) => {
+                        if (node.isText && node.text) {
+                          const text = node.text;
+                          const m = text.matchAll(regex);
+                          for (const match of m) {
+                            if (match.index !== undefined) {
+                              matches.push({
+                                from: pos + match.index,
+                                to: pos + match.index + match[0].length,
+                              });
+                            }
+                          }
+                        }
+                      });
+                      updateSearchDecorations(matches, -1, ed);
+                    }
+                  } catch {
+                    // Invalid regex, skip preview
+                  }
+                } else if (ed) {
+                  updateSearchDecorations([], 0, ed);
+                }
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
+                  // Clear preview highlights before executing
+                  const ed = editorRef.current;
+                  if (ed) updateSearchDecorations([], 0, ed);
                   handleVimCommand(vimCommandText);
                 } else if (e.key === "Escape") {
+                  const ed = editorRef.current;
+                  if (ed) updateSearchDecorations([], 0, ed);
                   setVimCommandVisibleWithRef(false);
                   setVimCommandError("");
                   editorRef.current?.commands.focus();
